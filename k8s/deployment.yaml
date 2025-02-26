@@ -1,0 +1,110 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: apprentice
+  namespace: world
+  labels:
+    app: apprentice
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: apprentice
+  template:
+    metadata:
+      labels:
+        app: apprentice
+    spec:
+      containers:
+        - name: apprentice
+          image: tdeslauriers/apprentice:latest
+          ports:
+            - containerPort: 8443
+          env:
+            - name: APPRENTICE_SERVICE_CLIENT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: cm-allowance-service
+                  key: allowance-client-id
+            - name: APPRENTICE_SERVICE_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: cm-allowance-service
+                  key: allowance-port
+            - name: APPRENTICE_CA_CERT
+              valueFrom:
+                secretKeyRef:
+                  name: secret-server-ca-prod
+                  key: server-ca-cert
+            - name: APPRENTICE_SERVER_CERT
+              valueFrom:
+                secretKeyRef:
+                  name: secret-allowance-server-cert
+                  key: server-cert
+            - name: APPRENTICE_SERVER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: secret-allowance-server-cert
+                  key: server-key
+            - name: APPRENTICE_DB_CA_CERT
+              valueFrom:
+                secretKeyRef:
+                  name: secret-db-ca-prod
+                  key: db-ca-cert
+            - name: APPRENTICE_DB_CLIENT_CERT
+              valueFrom:
+                secretKeyRef:
+                  name: secret-allowance-db-client-cert
+                  key: client-cert
+            - name: APPRENTICE_DB_CLIENT_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: secret-allowance-db-client-cert
+                  key: client-key
+            - name: APPRENTICE_DATABASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: cm-allowance-db
+                  key: db-url
+            - name: APPRENTICE_DATABASE_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: cm-allowance-db
+                  key: db-name
+            - name: APPRENTICE_DATABASE_USERNAME
+              valueFrom:
+                configMapKeyRef:
+                  name: cm-allowance-db
+                  key: db-username
+            - name: APPRENTICE_DATABASE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: secret-allowance-db
+                  key: db-password
+            - name: APPRENTICE_DATABASE_HMAC_INDEX_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: secret-allowance-db
+                  key: hmac-index-secret
+            - name: APPRENTICE_FIELD_LEVEL_AES_GCM_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: secret-allowance-db
+                  key: aes-gcm-secret
+            - name: APPRENTICE_S2S_JWT_VERIFYING_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: secret-s2s-jwt-signing
+                  key: jwt-verifying-key
+            - name: APPRENTICE_USER_JWT_VERIFYING_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: secret-identity-jwt-signing
+                  key: jwt-verifying-key
+          resources:
+            limits:
+              memory: "128Mi"
+              cpu: "500m"
+            requests:
+              memory: "64Mi"
+              cpu: "250m"
