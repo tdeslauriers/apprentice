@@ -28,10 +28,11 @@ func main() {
 		ServiceName: "apprentice",
 		Tls:         config.MutualTls,
 		Requires: config.Requires{
-			S2sClient:        false,
+			S2sClient:        true,
 			Db:               true,
 			IndexSecret:      true,
 			AesSecret:        true,
+			Identity:         true,
 			S2sVerifyingKey:  true,
 			UserVerifyingKey: true,
 		},

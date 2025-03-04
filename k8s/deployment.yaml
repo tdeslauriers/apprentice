@@ -46,6 +46,31 @@ spec:
                 secretKeyRef:
                   name: secret-allowance-server-cert
                   key: server-key
+            - name: APPRENTICE_CLIENT_CERT
+              valueFrom:
+                secretKeyRef:
+                  name: secret-identity-client-cert
+                  key: client-cert
+            - name: APPRENTICE_CLIENT_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: secret-identity-client-cert
+                  key: client-key
+            - name: APPRENTICE_S2S_AUTH_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: cm-s2s-service
+                  key: s2s-auth-url
+            - name: APPRENTICE_S2S_AUTH_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: secret-identity-s2s-client-creds
+                  key: s2s-auth-client-id
+            - name: APPRENTICE_S2S_AUTH_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: secret-identity-s2s-client-creds
+                  key: s2s-auth-client-secret
             - name: APPRENTICE_DB_CA_CERT
               valueFrom:
                 secretKeyRef:
@@ -101,6 +126,11 @@ spec:
                 secretKeyRef:
                   name: secret-identity-jwt-signing
                   key: jwt-verifying-key
+            - name: APPRENTICE_USER_AUTH_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: cm-identity-service
+                  key: identity-url
           resources:
             limits:
               memory: "128Mi"

@@ -2,7 +2,9 @@ package manager
 
 import (
 	"apprentice/internal/util"
+	"apprentice/pkg/allowances"
 	"crypto/tls"
+	"encoding/base64"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -64,21 +66,21 @@ func New(config *config.Config) (Manager, error) {
 
 	repository := data.NewSqlRepository(db)
 
-	// // indexer
-	// hmacSecret, err := base64.StdEncoding.DecodeString(config.Database.IndexSecret)
-	// if err != nil {
-	// 	return nil, fmt.Errorf("failed to decode hmac secret: %v", err)
-	// }
+	// indexer
+	hmacSecret, err := base64.StdEncoding.DecodeString(config.Database.IndexSecret)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode hmac secret: %v", err)
+	}
 
-	// indexer := data.NewIndexer(hmacSecret)
+	indexer := data.NewIndexer(hmacSecret)
 
-	// // field level encryption
-	// aes, err := base64.StdEncoding.DecodeString(config.Database.FieldSecret)
-	// if err != nil {
-	// 	return nil, fmt.Errorf("failed to decode field level encryption secret: %v", err)
-	// }
+	// field level encryption
+	aes, err := base64.StdEncoding.DecodeString(config.Database.FieldSecret)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode field level encryption secret: %v", err)
+	}
 
-	// cryptor := data.NewServiceAesGcmKey(aes)
+	cryptor := data.NewServiceAesGcmKey(aes)
 
 	// s2s jwt verifing key
 	s2sPublicKey, err := sign.ParsePublicEcdsaCert(config.Jwt.S2sVerifyingKey)
@@ -92,12 +94,19 @@ func New(config *config.Config) (Manager, error) {
 		return nil, fmt.Errorf("failed to parse iam verifying public key: %v", err)
 	}
 
+	// service(s):
+	allowance := allowances.NewService(repository, indexer, cryptor)
+
+	// caller(s)
+	identity := connect.NewS2sCaller(util.ServiceIdentity)
+
 	return &manager{
 		config:      *config,
 		serverTls:   serverTlsConfig,
 		repository:  repository,
 		s2sVerifier: jwt.NewVerifier(config.ServiceName, s2sPublicKey),
 		iamVerifier: jwt.NewVerifier(config.ServiceName, iamPublicKey),
+		allowance:   allowance,
 
 		logger: slog.Default().
 			With(slog.String(util.ServiceKey, util.ServiceApprentice)).
@@ -115,6 +124,8 @@ type manager struct {
 	repository  data.SqlRepository
 	s2sVerifier jwt.Verifier
 	iamVerifier jwt.Verifier
+	allowance   allowances.Service
+	identity   connect.S2sCaller
 
 	logger *slog.Logger
 }
@@ -127,6 +138,9 @@ func (m *manager) CloseDb() error {
 }
 
 func (m *manager) Run() error {
+
+	// allowances
+	allowance := allowances.NewHandler(m.allowance, m.s2sVerifier, m.iamVerifier)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", diagnostics.HealthCheckHandler)
