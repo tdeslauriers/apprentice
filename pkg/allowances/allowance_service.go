@@ -225,7 +225,7 @@ func (s *allowanceService) CreateAllowance(username string) (*tasks.Allowance, e
 		Balance:      0.0,
 		Username:     username,
 		Slug:         allowanceSlug,
-		CreatedAt:    record.CreatedAt,
+		
 		IsArchived:   false,
 		IsActive:     true,
 		IsCalculated: true,

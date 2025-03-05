@@ -65,3 +65,15 @@ CREATE TABLE task_allowance (
 );
 CREATE INDEX idx_allowance_task_xref ON task_allowance (allowance_uuid);
 CREATE INDEX idx_task_allowance_xref ON task_allowance (task_uuid);
+
+-- service token
+CREATE TABLE servicetoken (
+    uuid CHAR(36) PRIMARY KEY,
+    service_name VARCHAR(32) NOT NULL,
+    service_token VARCHAR(2048) NOT NULL,
+    service_expires TIMESTAMP NOT NULL,
+    refresh_token VARCHAR(128) NOT NULL,
+    refresh_expires TIMESTAMP NOT NULL
+);
+CREATE INDEX idx_servicetoken_servicename ON servicetoken(service_name);
+CREATE INDEX idx_servicetoken_refreshexpires ON servicetoken(refresh_expires);
