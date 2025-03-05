@@ -21,6 +21,6 @@ const (
 	ServiceKey = "service"
 
 	ServiceApprentice = "apprentice"
-	SertivceIdentity  = "identity"
-	ServiceS2s        = "s2s"
+	ServiceIdentity   = "shaw"
+	ServiceS2s        = "ran"
 )

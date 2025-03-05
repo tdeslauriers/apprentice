@@ -8,12 +8,14 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/tdeslauriers/carapace/pkg/config"
 	"github.com/tdeslauriers/carapace/pkg/connect"
 	"github.com/tdeslauriers/carapace/pkg/data"
 	"github.com/tdeslauriers/carapace/pkg/diagnostics"
 	"github.com/tdeslauriers/carapace/pkg/jwt"
+	"github.com/tdeslauriers/carapace/pkg/session/provider"
 	"github.com/tdeslauriers/carapace/pkg/sign"
 )
 
@@ -37,6 +39,19 @@ func New(config *config.Config) (Manager, error) {
 	serverTlsConfig, err := connect.NewTlsServerConfig(config.Tls, serverPki).Build()
 	if err != nil {
 		return nil, fmt.Errorf("failed to configure %s task management service server tls: %v", config.ServiceName, err)
+	}
+
+	// allowance/tasks service client
+	clientPki := &connect.Pki{
+		CertFile: *config.Certs.ClientCert,
+		KeyFile:  *config.Certs.ClientKey,
+		CaFiles:  []string{*config.Certs.ClientCa},
+	}
+
+	clientConfig := connect.NewTlsClientConfig(clientPki)
+	client, err := connect.NewTlsClient(clientConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to configure s2s client config: %v", err)
 	}
 
 	// db client
@@ -94,19 +109,34 @@ func New(config *config.Config) (Manager, error) {
 		return nil, fmt.Errorf("failed to parse iam verifying public key: %v", err)
 	}
 
-	// service(s):
-	allowance := allowances.NewService(repository, indexer, cryptor)
+	// caller(s):
+	// retry config for s2s callers
+	retry := connect.RetryConfiguration{
+		MaxRetries:  5,
+		BaseBackoff: 100 * time.Microsecond,
+		MaxBackoff:  10 * time.Second,
+	}
 
-	// caller(s)
-	identity := connect.NewS2sCaller(util.ServiceIdentity)
+	s2s := connect.NewS2sCaller(config.ServiceAuth.Url, util.ServiceS2s, client, retry)
+	identity := connect.NewS2sCaller(config.UserAuth.Url, util.ServiceIdentity, client, retry)
+
+	// s2s token provider
+	s2sCreds := provider.S2sCredentials{
+		ClientId:     config.ServiceAuth.ClientId,
+		ClientSecret: config.ServiceAuth.ClientSecret,
+	}
+
+	s2sTokenProvider := provider.NewS2sTokenProvider(s2s, s2sCreds, repository, cryptor)
 
 	return &manager{
-		config:      *config,
-		serverTls:   serverTlsConfig,
-		repository:  repository,
-		s2sVerifier: jwt.NewVerifier(config.ServiceName, s2sPublicKey),
-		iamVerifier: jwt.NewVerifier(config.ServiceName, iamPublicKey),
-		allowance:   allowance,
+		config:           *config,
+		serverTls:        serverTlsConfig,
+		repository:       repository,
+		s2sTokenProvider: s2sTokenProvider,
+		s2sVerifier:      jwt.NewVerifier(config.ServiceName, s2sPublicKey),
+		iamVerifier:      jwt.NewVerifier(config.ServiceName, iamPublicKey),
+		identity:         identity,
+		allowance:        allowances.NewService(repository, indexer, cryptor),
 
 		logger: slog.Default().
 			With(slog.String(util.ServiceKey, util.ServiceApprentice)).
@@ -119,13 +149,14 @@ var _ Manager = (*manager)(nil)
 
 // manager is the concrete implementation of the Manager interface
 type manager struct {
-	config      config.Config
-	serverTls   *tls.Config
-	repository  data.SqlRepository
-	s2sVerifier jwt.Verifier
-	iamVerifier jwt.Verifier
-	allowance   allowances.Service
-	identity   connect.S2sCaller
+	config           config.Config
+	serverTls        *tls.Config
+	repository       data.SqlRepository
+	s2sTokenProvider provider.S2sTokenProvider
+	s2sVerifier      jwt.Verifier
+	iamVerifier      jwt.Verifier
+	identity         connect.S2sCaller
+	allowance        allowances.Service
 
 	logger *slog.Logger
 }
@@ -140,10 +171,13 @@ func (m *manager) CloseDb() error {
 func (m *manager) Run() error {
 
 	// allowances
-	allowance := allowances.NewHandler(m.allowance, m.s2sVerifier, m.iamVerifier)
+	allowance := allowances.NewHandler(m.allowance, m.s2sVerifier, m.iamVerifier, m.s2sTokenProvider, m.identity)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", diagnostics.HealthCheckHandler)
+
+	// allowances
+	mux.HandleFunc("/allowances", allowance.HandleAllowances)
 
 	managerServer := &connect.TlsServer{
 		Addr:      m.config.ServicePort,
