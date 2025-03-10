@@ -19,6 +19,9 @@ import (
 // AllowanceService is the interface for the allowances service functionality
 type AllowanceService interface {
 
+	// GetAllowances returns all allowance accounts
+	GetAllowances() ([]tasks.Allowance, error)
+
 	// CreateAllowance creates a new allowance account for a user
 	CreateAllowance(username string) (*tasks.Allowance, error)
 }
@@ -46,6 +49,82 @@ type allowanceService struct {
 	cryptor data.Cryptor
 
 	logger *slog.Logger
+}
+
+// GetAllowances is the concrete implementation of the Service interface method GetAll
+func (s *allowanceService) GetAllowances() ([]tasks.Allowance, error) {
+
+	// get all allowance accounts
+	qry := `
+		SELECT 
+			uuid, 
+			balance, 
+			username,
+			user_index,
+			slug, 
+			slug_index,
+			created_at,
+			is_archived, 
+			is_active, 
+			is_calculated
+		FROM allowance`
+
+	var records []AllowanceRecord
+	if err := s.sql.SelectRecords(qry, &records); err != nil {
+		return nil, fmt.Errorf("failed to retrieve all allowance accounts: %v", err)
+	}
+
+	// decrypt and convert to clear text model; drop unneeded fields
+	var (
+		wg            sync.WaitGroup
+		allowanceChan = make(chan tasks.Allowance, len(records))
+		chErr         = make(chan error, len(records))
+	)
+
+	for _, record := range records {
+		wg.Add(1)
+		go func(r AllowanceRecord, ch chan tasks.Allowance, chErr chan error, wg *sync.WaitGroup) {
+
+			defer wg.Done()
+
+			a, err := s.prepareAllowance(r)
+			if err != nil {
+				chErr <- fmt.Errorf("failed to prepare allowance account %s: %v", r.Id, err)
+				return
+			}
+
+			ch <- *a
+
+		}(record, allowanceChan, chErr, &wg)
+	}
+
+	// wait for goroutines to complete
+	wg.Wait()
+	close(allowanceChan)
+	close(chErr)
+
+	// check for errors
+	errCount := len(chErr)
+	if errCount > 0 {
+		var sb strings.Builder
+		counter := 0
+		for e := range chErr {
+			sb.WriteString(e.Error())
+			if counter < errCount-1 {
+				sb.WriteString("; ")
+			}
+			counter++
+		}
+		return nil, fmt.Errorf(sb.String())
+	}
+
+	// collect clear text models
+	var allowances []tasks.Allowance
+	for a := range allowanceChan {
+		allowances = append(allowances, a)
+	}
+
+	return allowances, nil
 }
 
 // CreateAllowance is the concrete implementation of the Service interface method CreateAllowance
@@ -221,13 +300,103 @@ func (s *allowanceService) CreateAllowance(username string) (*tasks.Allowance, e
 
 	// return clear text allowance account model
 	return &tasks.Allowance{
-		Id:           allowanceId,
-		Balance:      0.0,
-		Username:     username,
-		Slug:         allowanceSlug,
-		
+		Id:       allowanceId,
+		Balance:  0.0,
+		Username: username,
+		Slug:     allowanceSlug,
+
 		IsArchived:   false,
 		IsActive:     true,
 		IsCalculated: true,
+	}, nil
+}
+
+// prepareAllowance decrypts and converts an allowance record to a clear text model
+func (s *allowanceService) prepareAllowance(r AllowanceRecord) (*tasks.Allowance, error) {
+
+	var (
+		wg    sync.WaitGroup
+		chErr = make(chan error, 3)
+
+		// clear text fields
+		balance  float64
+		username string
+		slug     string
+	)
+
+	// decrypt balance
+	wg.Add(1)
+	go func(b *float64, ch chan error, wg *sync.WaitGroup) {
+		defer wg.Done()
+
+		dec, err := s.cryptor.DecryptServiceData(r.Balance)
+		if err != nil {
+			ch <- fmt.Errorf("failed to decrypt balance for allowance account %s: %v", r.Id, err)
+		}
+
+		// convert decrypted balance to float64
+		bal := math.Float64frombits(binary.LittleEndian.Uint64(dec))
+
+		*b = bal
+	}(&balance, chErr, &wg)
+
+	// decrypt username
+	wg.Add(1)
+	go func(u *string, ch chan error, wg *sync.WaitGroup) {
+		defer wg.Done()
+
+		dec, err := s.cryptor.DecryptServiceData(r.Username)
+		if err != nil {
+			ch <- fmt.Errorf("failed to decrypt username for allowance account %s: %v", r.Id, err)
+		}
+
+		// convert decrypted username to string
+		*u = string(dec)
+	}(&username, chErr, &wg)
+
+	// decrypt slug
+	wg.Add(1)
+	go func(sg *string, ch chan error, wg *sync.WaitGroup) {
+		defer wg.Done()
+
+		dec, err := s.cryptor.DecryptServiceData(r.Slug)
+		if err != nil {
+			ch <- fmt.Errorf("failed to decrypt slug for allowance account %s: %v", r.Id, err)
+		}
+
+		// convert decrypted slug to string
+		*sg = string(dec)
+	}(&slug, chErr, &wg)
+
+	// wait for goroutines to complete
+	wg.Wait()
+	close(chErr)
+
+	// check for errors
+	errCount := len(chErr)
+	if errCount > 0 {
+		var sb strings.Builder
+		counter := 0
+		for e := range chErr {
+			sb.WriteString(e.Error())
+			if counter < errCount-1 {
+				sb.WriteString("; ")
+			}
+			counter++
+		}
+		return nil, fmt.Errorf(sb.String())
+	}
+
+	// return clear text model
+	// omitting fields: userIndex, slugIndex
+	return &tasks.Allowance{
+		Id:           r.Id,
+		Balance:      balance,
+		Username:     username,
+		Slug:         slug,
+		CreatedAt:    r.CreatedAt,
+		IsArchived:   r.IsArchived,
+		IsActive:     r.IsActive,
+		IsCalculated: r.IsCalculated,
 	}, nil
 }

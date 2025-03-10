@@ -57,7 +57,7 @@ func (h *allowancesHandler) HandleAllowances(w http.ResponseWriter, r *http.Requ
 
 	switch r.Method {
 	case http.MethodGet:
-		// get all allowances
+		h.handleGet(w, r)
 		return
 	case http.MethodPost:
 		h.handlePost(w, r)
@@ -67,6 +67,46 @@ func (h *allowancesHandler) HandleAllowances(w http.ResponseWriter, r *http.Requ
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusMethodNotAllowed,
 			Message:    "only GET and POST requests are allowed to /allowances endpoint",
+		}
+		e.SendJsonErr(w)
+		return
+	}
+}
+
+// handleGet handles the GET request to get all allowances
+func (h *allowancesHandler) handleGet(w http.ResponseWriter, r *http.Request) {
+
+	// validate s2stoken
+	svcToken := r.Header.Get("Service-Authorization")
+	if authorized, err := h.s2s.IsAuthorized(getAllowancesAllowed, svcToken); !authorized {
+		h.logger.Error(fmt.Sprintf("/allowances get-handler failed to authorize service token: %s", err.Error()))
+		connect.RespondAuthFailure(connect.S2s, err, w)
+		return
+	}
+
+	// validate iam token
+	accessToken := r.Header.Get("Authorization")
+	if authorized, err := h.iam.IsAuthorized(getAllowancesAllowed, accessToken); !authorized {
+		h.logger.Error(fmt.Sprintf("/allowances get-handler failed to authorize iam token: %s", err.Error()))
+		connect.RespondAuthFailure(connect.User, err, w)
+		return
+	}
+
+	// get all allowances
+	allowances, err := h.service.GetAllowances()
+	if err != nil {
+		h.logger.Error(fmt.Sprintf("/allowances get-handler failed to get all allowances: %s", err.Error()))
+		h.service.HandleAllowanceError(w, err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if err := json.NewEncoder(w).Encode(allowances); err != nil {
+		h.logger.Error(fmt.Sprintf("/allowances get-handler failed to json encode response: %s", err.Error()))
+		e := connect.ErrorHttp{
+			StatusCode: http.StatusInternalServerError,
+			Message:    "failed to json encode response",
 		}
 		e.SendJsonErr(w)
 		return
