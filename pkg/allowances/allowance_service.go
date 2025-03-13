@@ -2,6 +2,7 @@ package allowances
 
 import (
 	"apprentice/internal/util"
+	"database/sql"
 	"encoding/binary"
 	"fmt"
 	"log/slog"
@@ -22,8 +23,17 @@ type AllowanceService interface {
 	// GetAllowances returns all allowance accounts
 	GetAllowances() ([]tasks.Allowance, error)
 
+	// GetAllowance returns a single allowance account
+	GetAllowance(slug string) (*tasks.Allowance, error)
+
 	// CreateAllowance creates a new allowance account for a user
 	CreateAllowance(username string) (*tasks.Allowance, error)
+
+	// ValidateUpdate validates the update command for an allowance account for business rules errors.
+	ValidateUpdate(cmd tasks.UpdateAllowanceCmd, record tasks.Allowance) error
+
+	// UpdateAllowance updates an allowance account
+	UpdateAllowance(cmd *tasks.Allowance) error
 }
 
 // NewAllowanceService creates a new Service interface, returning a pointer to the concrete implementation
@@ -64,6 +74,7 @@ func (s *allowanceService) GetAllowances() ([]tasks.Allowance, error) {
 			slug, 
 			slug_index,
 			created_at,
+			updated_at,
 			is_archived, 
 			is_active, 
 			is_calculated
@@ -125,6 +136,48 @@ func (s *allowanceService) GetAllowances() ([]tasks.Allowance, error) {
 	}
 
 	return allowances, nil
+}
+
+// GetAllowance is the concrete implementation of the Service interface method GetAllowance
+func (s *allowanceService) GetAllowance(slug string) (*tasks.Allowance, error) {
+
+	// validate slug
+	if !validate.IsValidUuid(slug) {
+		return nil, fmt.Errorf("%s: %s", ErrInvalidAllowanceSlug, slug)
+	}
+
+	// get blind index for slug
+	index, err := s.indexer.ObtainBlindIndex(slug)
+	if err != nil {
+		return nil, fmt.Errorf("%s for slug %s: %v", ErrGenIndex, slug, err)
+	}
+
+	// get allowance account
+	qry := `
+		SELECT 
+			uuid, 
+			balance, 
+			username,
+			user_index,
+			slug, 
+			slug_index,
+			created_at,
+			updated_at,
+			is_archived, 
+			is_active, 
+			is_calculated
+		FROM allowance
+		WHERE slug_index = ?`
+	var record AllowanceRecord
+	if err := s.sql.SelectRecord(qry, &record, index); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("%s for slug %s", ErrAllowanceNotFound, slug)
+		}
+		return nil, fmt.Errorf("failed to retrieve allowance account for slug %s: %v", slug, err)
+	}
+
+	// decrypt and convert to clear text model
+	return s.prepareAllowance(record)
 }
 
 // CreateAllowance is the concrete implementation of the Service interface method CreateAllowance
@@ -265,6 +318,7 @@ func (s *allowanceService) CreateAllowance(username string) (*tasks.Allowance, e
 	// prepare record for db insertion
 	// Note: this model has all values as strings due to encryption.
 	// types.Allowance model has balance as a float64
+	now := time.Now().UTC()
 	record := AllowanceRecord{
 		Id:           allowanceId,
 		Balance:      balance,
@@ -272,7 +326,8 @@ func (s *allowanceService) CreateAllowance(username string) (*tasks.Allowance, e
 		UserIndex:    userIndex,
 		Slug:         encryptedSlug,
 		SlugIndex:    allowanceIndex,
-		CreatedAt:    data.CustomTime{Time: time.Now().UTC()},
+		CreatedAt:    data.CustomTime{Time: now},
+		UpdatedAt:    data.CustomTime{Time: now},
 		IsArchived:   false,
 		IsActive:     true,
 		IsCalculated: true,
@@ -288,10 +343,11 @@ func (s *allowanceService) CreateAllowance(username string) (*tasks.Allowance, e
 			slug, 
 			slug_index, 
 			created_at, 
+			updated_at,
 			is_archived, 
 			is_active, 
 			is_calculated)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	if err := s.sql.InsertRecord(qry, record); err != nil {
 		return nil, fmt.Errorf("failed to insert new allowance account record into database for username %s: %v", username, err)
 	}
@@ -304,11 +360,56 @@ func (s *allowanceService) CreateAllowance(username string) (*tasks.Allowance, e
 		Balance:  0.0,
 		Username: username,
 		Slug:     allowanceSlug,
-
+		CreatedAt: data.CustomTime{
+			Time: time.Now().UTC(),
+		},
 		IsArchived:   false,
 		IsActive:     true,
 		IsCalculated: true,
 	}, nil
+}
+
+// UpdateAllowance is the concrete implementation of the Service interface method UpdateAllowance
+// Note: this function updates the allowance fields, not the assigned (user or slug).  The user is immutable.
+// If a new user should be assigned to the account, a new account should be created.
+// This may need to be re-evaluated later.
+func (s *allowanceService) UpdateAllowance(cmd *tasks.Allowance) error {
+
+	// validate slug: redundant check, but good practice in case this is called by a different function
+	if !validate.IsValidUuid(cmd.Slug) {
+		return fmt.Errorf("%s: %s", ErrInvalidAllowanceSlug, cmd.Slug)
+	}
+
+	// get blind index for slug
+	index, err := s.indexer.ObtainBlindIndex(cmd.Slug)
+	if err != nil {
+		return fmt.Errorf("%s for allowance slug %s: %v", ErrGenIndex, cmd.Slug, err)
+	}
+
+	// convert balance to bytes for encryption
+	buf := make([]byte, 8)
+	binary.LittleEndian.PutUint64(buf, math.Float64bits(cmd.Balance))
+
+	// encrypt balance
+	encBal, err := s.cryptor.EncryptServiceData(buf)
+	if err != nil {
+		return fmt.Errorf("failed to encrypt balance for updating allowance account id %s, slug %s: %v", cmd.Id, cmd.Slug, err)
+	}
+
+	// update account record
+	qry := `
+		UPDATE allowance
+		SET balance = ?,
+			updated_at = ?,
+			is_archived = ?,
+			is_active = ?,
+			is_calculated = ?
+		WHERE slug_index = ?`
+	if err := s.sql.UpdateRecord(qry, encBal, cmd.UpdatedAt, cmd.IsArchived, cmd.IsActive, cmd.IsCalculated, index); err != nil {
+		return fmt.Errorf("failed to update allowance account record for id %s, slug %s: %v", cmd.Id, cmd.Slug, err)
+	}
+
+	return nil
 }
 
 // prepareAllowance decrypts and converts an allowance record to a clear text model
@@ -395,8 +496,117 @@ func (s *allowanceService) prepareAllowance(r AllowanceRecord) (*tasks.Allowance
 		Username:     username,
 		Slug:         slug,
 		CreatedAt:    r.CreatedAt,
+		UpdatedAt:    r.UpdatedAt,
 		IsArchived:   r.IsArchived,
 		IsActive:     r.IsActive,
 		IsCalculated: r.IsCalculated,
 	}, nil
+}
+
+// ValidateUpdate is the concrete implementation of the Service interface method ValidateUpdate
+// Note: this is not written in a consise way, but rather to show the logic more explicitly
+// and includes redundant checks for in case the input validation check is not performed.
+func (s *allowanceService) ValidateUpdate(cmd tasks.UpdateAllowanceCmd, record tasks.Allowance) error {
+
+	// check for valid debit and credit amounts
+	if cmd.Debit < 0 || cmd.Debit > 10000 {
+		return fmt.Errorf(ErrInvalidDebit1)
+	}
+
+	if cmd.Credit < 0 || cmd.Credit > 10000 {
+		return fmt.Errorf(ErrInvalidCredit1)
+	}
+
+	// make sure account is not archived, active and calculated to update the balance
+	if cmd.Credit > 0 || cmd.Debit > 0 {
+
+		if record.IsArchived {
+			return fmt.Errorf(ErrUpdateArchivedBalance)
+		}
+
+		if !record.IsActive {
+			return fmt.Errorf(ErrUpdateInactiveBalance)
+		}
+
+		if !record.IsCalculated {
+			return fmt.Errorf(ErrUpdateUncalculatedBalance)
+		}
+	}
+
+	// check the balance does not become negative
+	if cmd.Debit > cmd.Credit+record.Balance {
+		return fmt.Errorf(ErrInvalidDebit2)
+	}
+
+	// checks required if the account is being set to archived
+	if cmd.IsArchived {
+
+		// make sure balance is not also being updated
+		if cmd.Debit > 0 || cmd.Credit > 0 {
+			return fmt.Errorf(ErrUpdateArchiveMismatch)
+		}
+
+		// cannot set it to inactive or calculated at the same time
+		if !cmd.IsActive || !cmd.IsCalculated {
+			return fmt.Errorf(ErrStatusArchiveMismatch1)
+		}
+
+		// cannot set an active or calculated account to archived
+		if record.IsActive || record.IsCalculated {
+			return fmt.Errorf(ErrStatusArchiveMismatch2)
+		}
+	}
+
+	// !cmd.IsArchived does not have rules.
+
+	// checks required if the account is being set to active
+	if cmd.IsActive {
+
+		// cannot set it to archived at the same time
+		if cmd.IsArchived {
+			return fmt.Errorf(ErrStatusArchiveMismatch1)
+		}
+
+		// cannot set an archived account to active
+		if record.IsArchived {
+			return fmt.Errorf(ErrStatusActiveMismatch1)
+		}
+	}
+
+	if !cmd.IsActive {
+
+		// cannot set it to calculeated
+		if cmd.IsCalculated {
+			return fmt.Errorf(ErrStatusCalculatedMismatch1)
+		}
+
+		// cannot set currently calculated account to inactive
+		if record.IsCalculated {
+			return fmt.Errorf(ErrStatusCalculatedMismatch2)
+		}
+	}
+
+	// checks required if the account is being set to calculated
+	if cmd.IsCalculated {
+
+		// cannot set it to archived at the same time
+		if cmd.IsArchived {
+			return fmt.Errorf(ErrStatusArchiveMismatch1)
+		}
+
+		// cannot set an archived account to calculated
+		if record.IsArchived {
+			return fmt.Errorf(ErrStatusCalculatedMismatch1)
+		}
+
+		if !cmd.IsActive {
+			return fmt.Errorf(ErrStatusCalculatedMismatch2)
+		}
+
+		if !record.IsActive {
+			return fmt.Errorf(ErrStatusCalculatedMismatch3)
+		}
+	}
+	return nil
+
 }

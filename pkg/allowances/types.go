@@ -15,8 +15,26 @@ const (
 	// 401
 	ErrAccountExists = "allowance account already exists"
 
+	// 404
+	ErrAllowanceNotFound = "allowance account not found"
+
 	// 422
-	ErrInvalidUsername = "invalid username"
+	ErrInvalidUsername           = "invalid username"
+	ErrInvalidAllowanceSlug      = "invalid allowance slug"
+	ErrInvalidCredit1            = "invalid credit amount: must be greater than zero and less than 10,000 because that is ridculous"
+	ErrInvalidDebit1             = "invalid debit amount: must be greater than zero and less than 10,000 because that is ridculous"
+	ErrInvalidDebit2             = "invalid debit amount: must be less than or equal to the balance + the credit amount"
+	ErrUpdateArchivedBalance     = "invalid balance update: cannot update an archived account's balance"
+	ErrUpdateInactiveBalance     = "invalid balance update: cannot update an inactive account's balance"
+	ErrUpdateUncalculatedBalance = "invalid balance update: cannot update a uncalculated account's balance"
+	ErrUpdateArchiveMismatch     = "invalid selection: cannot set account to archived and update the balance at the same time"
+	ErrStatusArchiveMismatch1    = "invalid selection: cannot set account to archived and active or calculated at the same time"
+	ErrStatusArchiveMismatch2    = "invalid selection: cannot set account to archived if it is currently active or calculated"
+	ErrStatusActiveMismatch1     = "invalid selection: cannot set account to active and if it is currently archived at the same time"
+	ErrStatusActiveMismatch2     = "invalid selection: cannot set account to inactive and calculated at the same time"
+	ErrStatusCalculatedMismatch1 = "invalid selection: cannot set account to calculated and if it is currently archived at the same time"
+	ErrStatusCalculatedMismatch2 = "invalid selection: cannot set account to calculated and inactive at the same time"
+	ErrStatusCalculatedMismatch3 = "invalid selection: cannot set account to calculated if it is currently inactive"
 
 	// 500
 	ErrGenIndex = "failed to obtain/generate blind index"
@@ -98,6 +116,7 @@ type AllowanceRecord struct {
 	Slug         string          `db:"slug"`
 	SlugIndex    string          `db:"slug_index"`
 	CreatedAt    data.CustomTime `db:"created_at"`
+	UpdatedAt    data.CustomTime `db:"updated_at"`
 	IsArchived   bool            `db:"is_archived"`
 	IsActive     bool            `db:"is_active"`
 	IsCalculated bool            `db:"is_calculated"`

@@ -43,7 +43,15 @@ func (s *allowanceErrorService) HandleAllowanceError(w http.ResponseWriter, err 
 		}
 		e.SendJsonErr(w)
 		return
-	case strings.Contains(err.Error(), ErrInvalidUsername):
+	case strings.Contains(err.Error(), "not found"):
+		s.logger.Error(err.Error())
+		e := connect.ErrorHttp{
+			StatusCode: http.StatusNotFound,
+			Message:    err.Error(),
+		}
+		e.SendJsonErr(w)
+		return
+	case strings.Contains(err.Error(), "invalid"):
 		s.logger.Error(err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusUnprocessableEntity,

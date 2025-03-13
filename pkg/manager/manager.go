@@ -178,6 +178,7 @@ func (m *manager) Run() error {
 
 	// allowances
 	mux.HandleFunc("/allowances", allowance.HandleAllowances)
+	mux.HandleFunc("/allowances/", allowance.HandleAllowance)
 
 	managerServer := &connect.TlsServer{
 		Addr:      m.config.ServicePort,

@@ -12,6 +12,7 @@ CREATE TABLE allowance (
     slug VARCHAR(128) NOT NULL,
     slug_index VARCHAR(128) NOT NULL, 
     created_at TIMESTAMP NOT NULL DEFAULT UTC_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT UTC_TIMESTAMP,
     is_archived BOOLEAN NOT NULL,
     is_active BOOLEAN NOT NULL, 
     is_calculated BOOLEAN NOT NULL
