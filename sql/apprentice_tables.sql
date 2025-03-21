@@ -1,7 +1,7 @@
 DROP TABLE IF EXISTS allowance;
-DROP TABLE IF EXISTS tasktype;
+DROP TABLE IF EXISTS template;
 DROP TABLE IF EXISTS task;
-DROP TABLE IF EXISTS tasktype_allowance;
+DROP TABLE IF EXISTS template_allowance;
 DROP TABLE IF EXISTS task_allowance;
 
 CREATE TABLE allowance (
@@ -20,7 +20,7 @@ CREATE TABLE allowance (
 CREATE UNIQUE iNDEX idx_user_index ON allowance (user_index);
 CREATE UNIQUE iNDEX idx_allowance_slug_index ON allowance (slug_index);
 
-CREATE TABLE tasktype (
+CREATE TABLE template (
     uuid CHAR(36) PRIMARY KEY,
     name VARCHAR(64),
     description VARCHAR(255),
@@ -30,31 +30,29 @@ CREATE TABLE tasktype (
     created_at TIMESTAMP NOT NULL DEFAULT UTC_TIMESTAMP,
     is_archived BOOLEAN NOT NULL
 );
-CREATE UNIQUE iNDEX idx_tasktype_slug_index ON tasktype (slug);
+CREATE UNIQUE iNDEX idx_template_slug_index ON template (slug);
 
 CREATE TABLE task (
     uuid CHAR(36) PRIMARY KEY,
     created_at TIMESTAMP NOT NULL DEFAULT UTC_TIMESTAMP,
     is_complete BOOLEAN NOT NULL,
-    is_completesatisfactory BOOLEAN NOT NULL,
+    is_satisfactory BOOLEAN NOT NULL,
     is_proactive BOOLEAN NOT NULL,
-    tasktype_uuid CHAR(36)  NOT NULL,
     slug CHAR(36) NOT NULL,
-    is_archived BOOLEAN NOT NULL,
-    CONSTRAINT fk_tasktype_task_uuid FOREIGN KEY (tasktype_uuid) REFERENCES tasktype (uuid)
+    is_archived BOOLEAN NOT NULL
 );
 CREATE UNIQUE iNDEX idx_task_slug_index ON task (slug);
 
-CREATE TABLE tasktype_allowance (
+CREATE TABLE template_allowance (
     id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
-    tasktype_uuid CHAR(36) NOT NULL,
+    template_uuid CHAR(36) NOT NULL,
     allowance_uuid CHAR(36) NOT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT UTC_TIMESTAMP,
-    CONSTRAINT fk_tasktype_allowance_uuid FOREIGN KEY (tasktype_uuid) REFERENCES tasktype (uuid),
-    CONSTRAINT fk_allowance_tasktype_uuid FOREIGN KEY (allowance_uuid) REFERENCES allowance (uuid)
+    CONSTRAINT fk_template_allowance_uuid FOREIGN KEY (template_uuid) REFERENCES template (uuid),
+    CONSTRAINT fk_allowance_template_uuid FOREIGN KEY (allowance_uuid) REFERENCES allowance (uuid)
 );
-CREATE INDEX idx_allowance_tasktype_xref ON tasktype_allowance (allowance_uuid);
-CREATE INDEX idx_tasktype_allowance_xref ON tasktype_allownace (tasktype_uuid);
+CREATE INDEX idx_allowance_template_xref ON template_allowance (allowance_uuid);
+CREATE INDEX idx_template_allowance_xref ON template_allownace (template_uuid);
 
 CREATE TABLE task_allowance (
     id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -66,6 +64,17 @@ CREATE TABLE task_allowance (
 );
 CREATE INDEX idx_allowance_task_xref ON task_allowance (allowance_uuid);
 CREATE INDEX idx_task_allowance_xref ON task_allowance (task_uuid);
+
+CREATE TABLE template_task (
+    id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    template_uuid CHAR(36) NOT NULL,
+    task_uuid CHAR(36) NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT UTC_TIMESTAMP,
+    CONSTRAINT fk_template_task_uuid FOREIGN KEY (template_uuid) REFERENCES template (uuid),
+    CONSTRAINT fk_task_template_uuid FOREIGN KEY (task_uuid) REFERENCES task (uuid)
+);
+CREATE INDEX idx_task_template_xref ON template_task (task_uuid);
+CREATE INDEX idx_template_task_xref ON template_task(template_uuid);
 
 -- service token
 CREATE TABLE servicetoken (

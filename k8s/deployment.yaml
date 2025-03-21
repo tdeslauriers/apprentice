@@ -63,13 +63,13 @@ spec:
                   key: s2s-auth-url
             - name: APPRENTICE_S2S_AUTH_CLIENT_ID
               valueFrom:
-                secretKeyRef:
-                  name: secret-identity-s2s-client-creds
-                  key: s2s-auth-client-id
+                configMapKeyRef:
+                  name: cm-allowance-service
+                  key: allowance-client-id
             - name: APPRENTICE_S2S_AUTH_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:
-                  name: secret-identity-s2s-client-creds
+                  name: secret-allowance-s2s-client-creds
                   key: s2s-auth-client-secret
             - name: APPRENTICE_DB_CA_CERT
               valueFrom:

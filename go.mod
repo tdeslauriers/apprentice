@@ -2,7 +2,7 @@ module apprentice
 
 go 1.22.1
 
-require github.com/tdeslauriers/carapace v0.1.25
+require github.com/tdeslauriers/carapace v0.1.29
 
 require (
 	filippo.io/edwards25519 v1.1.0 // indirect

@@ -3,6 +3,7 @@ package manager
 import (
 	"apprentice/internal/util"
 	"apprentice/pkg/allowances"
+	"apprentice/pkg/templates"
 	"crypto/tls"
 	"encoding/base64"
 	"fmt"
@@ -137,6 +138,7 @@ func New(config *config.Config) (Manager, error) {
 		iamVerifier:      jwt.NewVerifier(config.ServiceName, iamPublicKey),
 		identity:         identity,
 		allowance:        allowances.NewService(repository, indexer, cryptor),
+		template:         templates.NewService(repository),
 
 		logger: slog.Default().
 			With(slog.String(util.ServiceKey, util.ServiceApprentice)).
@@ -157,6 +159,7 @@ type manager struct {
 	iamVerifier      jwt.Verifier
 	identity         connect.S2sCaller
 	allowance        allowances.Service
+	template         templates.Service
 
 	logger *slog.Logger
 }
@@ -173,12 +176,18 @@ func (m *manager) Run() error {
 	// allowances
 	allowance := allowances.NewHandler(m.allowance, m.s2sVerifier, m.iamVerifier, m.s2sTokenProvider, m.identity)
 
+	// templates
+	template := templates.NewHandler(m.template, m.allowance, m.s2sVerifier, m.iamVerifier, m.s2sTokenProvider, m.identity)
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", diagnostics.HealthCheckHandler)
 
 	// allowances
 	mux.HandleFunc("/allowances", allowance.HandleAllowances)
 	mux.HandleFunc("/allowances/", allowance.HandleAllowance)
+
+	// templates
+	mux.HandleFunc("/templates/assignees", template.HandleGetAssignees)
 
 	managerServer := &connect.TlsServer{
 		Addr:      m.config.ServicePort,

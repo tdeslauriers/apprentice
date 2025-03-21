@@ -5,8 +5,8 @@ NAMESPACE="world"
 SECRET_NAME="secret-allowance-s2s-client-creds"
 
 # get certificate and key from 1Password
-S2S_AUTH_CLIENT_ID=$(op read "op://world_site/apprentice_service_container_dev/client_id")
-S2S_AUTH_CLIENT_SECRET=$(op read "op://world_site/apprentice_service_container_dev/password")
+S2S_AUTH_CLIENT_ID=$(op read "op://world_site/apprentice_service_container_prod/client_id")
+S2S_AUTH_CLIENT_SECRET=$(op read "op://world_site/apprentice_service_container_prod/password")
 
 # check if values are retrieved successfully
 if [[ -z "$S2S_AUTH_CLIENT_ID" || -z "$S2S_AUTH_CLIENT_SECRET" ]]; then

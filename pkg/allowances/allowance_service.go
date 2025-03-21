@@ -388,7 +388,7 @@ func (s *allowanceService) UpdateAllowance(cmd *tasks.Allowance) error {
 
 	// convert balance to bytes for encryption
 	buf := make([]byte, 8)
-	binary.LittleEndian.PutUint64(buf, math.Float64bits(cmd.Balance))
+	binary.LittleEndian.PutUint64(buf, cmd.Balance)
 
 	// encrypt balance
 	encBal, err := s.cryptor.EncryptServiceData(buf)
@@ -420,14 +420,14 @@ func (s *allowanceService) prepareAllowance(r AllowanceRecord) (*tasks.Allowance
 		chErr = make(chan error, 3)
 
 		// clear text fields
-		balance  float64
+		balance  uint64
 		username string
 		slug     string
 	)
 
 	// decrypt balance
 	wg.Add(1)
-	go func(b *float64, ch chan error, wg *sync.WaitGroup) {
+	go func(b *uint64, ch chan error, wg *sync.WaitGroup) {
 		defer wg.Done()
 
 		dec, err := s.cryptor.DecryptServiceData(r.Balance)
@@ -436,7 +436,7 @@ func (s *allowanceService) prepareAllowance(r AllowanceRecord) (*tasks.Allowance
 		}
 
 		// convert decrypted balance to float64
-		bal := math.Float64frombits(binary.LittleEndian.Uint64(dec))
+		bal := binary.LittleEndian.Uint64(dec)
 
 		*b = bal
 	}(&balance, chErr, &wg)
@@ -509,33 +509,33 @@ func (s *allowanceService) prepareAllowance(r AllowanceRecord) (*tasks.Allowance
 func (s *allowanceService) ValidateUpdate(cmd tasks.UpdateAllowanceCmd, record tasks.Allowance) error {
 
 	// check for valid debit and credit amounts
-	if cmd.Debit < 0 || cmd.Debit > 10000 {
-		return fmt.Errorf(ErrInvalidDebit1)
+	if cmd.Debit > 1000000 {
+		return fmt.Errorf("invalid debit: cannot debit more than $10,000 because that is ridiculous")
 	}
 
-	if cmd.Credit < 0 || cmd.Credit > 10000 {
-		return fmt.Errorf(ErrInvalidCredit1)
+	if cmd.Credit > 1000000 {
+		return fmt.Errorf("invalid credit: cannot credit more than $10,000 because that is ridiculous")
 	}
 
 	// make sure account is not archived, active and calculated to update the balance
 	if cmd.Credit > 0 || cmd.Debit > 0 {
 
-		if record.IsArchived {
-			return fmt.Errorf(ErrUpdateArchivedBalance)
+		if cmd.IsArchived {
+			return fmt.Errorf("invalid balance update: cannot update balance of an archived account")
 		}
 
-		if !record.IsActive {
-			return fmt.Errorf(ErrUpdateInactiveBalance)
+		if !cmd.IsActive {
+			return fmt.Errorf("invalid balance update: cannot update balance of an inactive account")
 		}
 
-		if !record.IsCalculated {
-			return fmt.Errorf(ErrUpdateUncalculatedBalance)
+		if !cmd.IsCalculated {
+			return fmt.Errorf("invalid balance update: cannot update balance of an uncalculated account")
 		}
 	}
 
 	// check the balance does not become negative
 	if cmd.Debit > cmd.Credit+record.Balance {
-		return fmt.Errorf(ErrInvalidDebit2)
+		return fmt.Errorf("invalid debit: cannot debit more than the current balance + credit")
 	}
 
 	// checks required if the account is being set to archived
@@ -543,17 +543,12 @@ func (s *allowanceService) ValidateUpdate(cmd tasks.UpdateAllowanceCmd, record t
 
 		// make sure balance is not also being updated
 		if cmd.Debit > 0 || cmd.Credit > 0 {
-			return fmt.Errorf(ErrUpdateArchiveMismatch)
+			return fmt.Errorf("invalid selection: cannot set account to archived and update balance at the same time")
 		}
 
 		// cannot set it to inactive or calculated at the same time
-		if !cmd.IsActive || !cmd.IsCalculated {
-			return fmt.Errorf(ErrStatusArchiveMismatch1)
-		}
-
-		// cannot set an active or calculated account to archived
-		if record.IsActive || record.IsCalculated {
-			return fmt.Errorf(ErrStatusArchiveMismatch2)
+		if cmd.IsActive || cmd.IsCalculated {
+			return fmt.Errorf("invalid selection: cannot set account to archived and inactive or uncalculated at the same time")
 		}
 	}
 
@@ -564,12 +559,7 @@ func (s *allowanceService) ValidateUpdate(cmd tasks.UpdateAllowanceCmd, record t
 
 		// cannot set it to archived at the same time
 		if cmd.IsArchived {
-			return fmt.Errorf(ErrStatusArchiveMismatch1)
-		}
-
-		// cannot set an archived account to active
-		if record.IsArchived {
-			return fmt.Errorf(ErrStatusActiveMismatch1)
+			return fmt.Errorf("invalid selection: cannot set account to active and archived at the same time")
 		}
 	}
 
@@ -577,12 +567,7 @@ func (s *allowanceService) ValidateUpdate(cmd tasks.UpdateAllowanceCmd, record t
 
 		// cannot set it to calculeated
 		if cmd.IsCalculated {
-			return fmt.Errorf(ErrStatusCalculatedMismatch1)
-		}
-
-		// cannot set currently calculated account to inactive
-		if record.IsCalculated {
-			return fmt.Errorf(ErrStatusCalculatedMismatch2)
+			return fmt.Errorf("invalid selection: cannot set account to inactive and calculated at the same time")
 		}
 	}
 
@@ -591,21 +576,13 @@ func (s *allowanceService) ValidateUpdate(cmd tasks.UpdateAllowanceCmd, record t
 
 		// cannot set it to archived at the same time
 		if cmd.IsArchived {
-			return fmt.Errorf(ErrStatusArchiveMismatch1)
-		}
-
-		// cannot set an archived account to calculated
-		if record.IsArchived {
-			return fmt.Errorf(ErrStatusCalculatedMismatch1)
+			return fmt.Errorf("invalid selection: cannot set account to calculated and archived at the same time")
 		}
 
 		if !cmd.IsActive {
-			return fmt.Errorf(ErrStatusCalculatedMismatch2)
+			return fmt.Errorf("invalid selection: cannot set account to calculated and inactive at the same time")
 		}
 
-		if !record.IsActive {
-			return fmt.Errorf(ErrStatusCalculatedMismatch3)
-		}
 	}
 	return nil
 

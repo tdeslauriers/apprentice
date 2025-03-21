@@ -6,7 +6,7 @@ const (
 	PackageMain       = "main"
 	PackageManager    = "task manager"
 	PackageTasks      = "tasks"
-	PackageTaskTypes  = "tasktypes"
+	PackageTemplates  = "task templates"
 	PackageAllowances = "allowances"
 
 	// component keys
@@ -16,7 +16,7 @@ const (
 	ComponentManager    = "manager"
 	ComponentAllowances = "allowances"
 	ComponentTasks      = "tasks"
-	ComponentTaskTypes  = "tasktypes"
+	ComponentTemplates  = "task templates"
 
 	ServiceKey = "service"
 
