@@ -142,6 +142,7 @@ func New(config *config.Config) (Manager, error) {
 		allowance:        allowances.NewService(repository, indexer, cryptor),
 		template:         templates.NewService(repository),
 		task:             tasks.NewService(repository),
+		cleanup:          schedule.NewCleanup(repository),
 
 		logger: slog.Default().
 			With(slog.String(util.ServiceKey, util.ServiceApprentice)).
