@@ -23,8 +23,16 @@ type AllowanceService interface {
 	// GetAllowances returns all allowance accounts
 	GetAllowances() ([]tasks.Allowance, error)
 
-	// GetAllowance returns a single allowance account
-	GetAllowance(slug string) (*tasks.Allowance, error)
+	// GetBySlug returns a single allowance account by slug
+	GetBySlug(slug string) (*tasks.Allowance, error)
+
+	// GetByUser returns a single allowance account by username
+	GetByUser(username string) (*tasks.Allowance, error)
+
+	// GetByUsers returns multiple allowance accounts by usernames if they are valid.
+	// and returns a slice of the users names that were not found in the database.
+	// Note: it will error on any not well-formed usernames.
+	GetValidUsers(users []string) (existing []tasks.Allowance, missing []string, err error)
 
 	// CreateAllowance creates a new allowance account for a user
 	CreateAllowance(username string) (*tasks.Allowance, error)
@@ -138,8 +146,8 @@ func (s *allowanceService) GetAllowances() ([]tasks.Allowance, error) {
 	return allowances, nil
 }
 
-// GetAllowance is the concrete implementation of the Service interface method GetAllowance
-func (s *allowanceService) GetAllowance(slug string) (*tasks.Allowance, error) {
+// GetBySlug is the concrete implementation of the Service interface method GetBySlug
+func (s *allowanceService) GetBySlug(slug string) (*tasks.Allowance, error) {
 
 	// validate slug
 	if !validate.IsValidUuid(slug) {
@@ -178,6 +186,165 @@ func (s *allowanceService) GetAllowance(slug string) (*tasks.Allowance, error) {
 
 	// decrypt and convert to clear text model
 	return s.prepareAllowance(record)
+}
+
+// GetByUser is the concrete implementation of the Service interface method GetByUser
+func (s *allowanceService) GetByUser(username string) (*tasks.Allowance, error) {
+
+	// validate username
+	if err := validate.IsValidEmail(username); err != nil {
+		return nil, fmt.Errorf("%s: %v", ErrInvalidUsername, err)
+	}
+
+	// get blind index for username
+	index, err := s.indexer.ObtainBlindIndex(username)
+	if err != nil {
+		return nil, fmt.Errorf("%s for username %s: %v", ErrGenIndex, username, err)
+	}
+
+	// get allowance account
+	qry := `
+		SELECT 
+			uuid, 
+			balance, 
+			username,
+			user_index,
+			slug, 
+			slug_index,
+			created_at,
+			updated_at,
+			is_archived, 
+			is_active, 
+			is_calculated
+		FROM allowance
+		WHERE user_index = ?`
+	var record AllowanceRecord
+	if err := s.sql.SelectRecord(qry, &record, index); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("%s for username %s", ErrAllowanceNotFound, username)
+		}
+		return nil, fmt.Errorf("failed to retrieve allowance account for username %s: %v", username, err)
+	}
+
+	// decrypt and convert to clear text model
+	return s.prepareAllowance(record)
+}
+
+// GetByUsers is the concrete implementation of the Service interface method GetByUsers
+// It will error if any of the users does not exist in the database.
+func (s *allowanceService) GetValidUsers(users []string) ([]tasks.Allowance, []string, error) {
+
+	// validate usernames
+	for _, user := range users {
+		if err := validate.IsValidEmail(user); err != nil {
+			return nil, nil, fmt.Errorf("%s: %v", ErrInvalidUsername, err)
+		}
+	}
+
+	// get blind userIndexes for usernames
+	userIndexes := make([]string, len(users))
+	for i, user := range users {
+		ind, err := s.indexer.ObtainBlindIndex(user)
+		if err != nil {
+			return nil, nil, fmt.Errorf("%s for username %s: %v", ErrGenIndex, user, err)
+		}
+		userIndexes[i] = ind
+	}
+
+	// convert string slice of indexes to args ...interface{}
+	placeholders := make([]string, len(userIndexes))
+	args := make([]interface{}, len(userIndexes))
+	for i, index := range userIndexes {
+		placeholders[i] = "?"
+		args[i] = index
+	}
+
+	// create placeholders for query
+
+	// get allowance accounts
+	// Note: userindexes that do not exist will not be returned, ie, ignored.
+	qry := fmt.Sprintf(`
+		SELECT 
+			uuid, 
+			balance, 
+			username,
+			user_index,
+			slug, 
+			slug_index,
+			created_at,
+			updated_at,
+			is_archived, 
+			is_active, 
+			is_calculated
+		FROM allowance
+		WHERE user_index IN (%s)`, strings.Join(placeholders, ","))
+	var records []AllowanceRecord
+	if err := s.sql.SelectRecords(qry, &records, args...); err != nil {
+		return nil, nil, fmt.Errorf("failed to retrieve allowance accounts for users: %v", err)
+	}
+
+	// decrypt and convert to clear text models
+	var (
+		wg            sync.WaitGroup
+		allowanceChan = make(chan tasks.Allowance, len(records))
+		chErr         = make(chan error, len(records))
+	)
+
+	for _, record := range records {
+		wg.Add(1)
+		go func(r AllowanceRecord, ch chan tasks.Allowance, chErr chan error, wg *sync.WaitGroup) {
+
+			defer wg.Done()
+
+			a, err := s.prepareAllowance(r)
+			if err != nil {
+				chErr <- fmt.Errorf("failed to prepare allowance account %s: %v", r.Id, err)
+				return
+			}
+
+			ch <- *a
+
+		}(record, allowanceChan, chErr, &wg)
+	}
+
+	// wait for goroutines to complete
+	wg.Wait()
+	close(allowanceChan)
+	close(chErr)
+
+	// check for errors
+	errCount := len(chErr)
+	if errCount > 0 {
+		var sb strings.Builder
+		counter := 0
+		for e := range chErr {
+			sb.WriteString(e.Error())
+			if counter < errCount-1 {
+				sb.WriteString("; ")
+			}
+			counter++
+		}
+		return nil, nil, fmt.Errorf(sb.String())
+	}
+
+	// collect existing users into a map
+	found := make(map[string]tasks.Allowance, len(allowanceChan)) // username is key
+	for a := range allowanceChan {
+		found[a.Username] = a
+	}
+
+	// Compare found to orginal user list
+	existing := make([]tasks.Allowance, 0, len(users))
+	missing := make([]string, 0, len(users))
+	for _, un := range users {
+		if _, ok := found[un]; !ok {
+			missing = append(missing, un)
+		} else {
+			existing = append(existing, found[un])
+		}
+	}
+
+	return existing, missing, nil
 }
 
 // CreateAllowance is the concrete implementation of the Service interface method CreateAllowance

@@ -187,7 +187,7 @@ func (h *allowancesHandler) handleGetAllownace(w http.ResponseWriter, r *http.Re
 	}
 
 	// get allowance
-	allowance, err := h.service.GetAllowance(slug)
+	allowance, err := h.service.GetBySlug(slug)
 	if err != nil {
 		h.logger.Error(fmt.Sprintf("/allowances get-handler failed to get allowance: %s", err.Error()))
 		h.service.HandleAllowanceError(w, err)
@@ -411,7 +411,7 @@ func (h *allowancesHandler) handleUpdateAllowance(w http.ResponseWriter, r *http
 	}
 
 	// get allowance by slug to check update values for business logic issues
-	allowance, err := h.service.GetAllowance(slug)
+	allowance, err := h.service.GetBySlug(slug)
 	if err != nil {
 		h.service.HandleAllowanceError(w, err)
 		return

@@ -3,6 +3,7 @@ package manager
 import (
 	"apprentice/internal/util"
 	"apprentice/pkg/allowances"
+	"apprentice/pkg/tasks"
 	"apprentice/pkg/templates"
 	"crypto/tls"
 	"encoding/base64"
@@ -16,6 +17,7 @@ import (
 	"github.com/tdeslauriers/carapace/pkg/data"
 	"github.com/tdeslauriers/carapace/pkg/diagnostics"
 	"github.com/tdeslauriers/carapace/pkg/jwt"
+	"github.com/tdeslauriers/carapace/pkg/schedule"
 	"github.com/tdeslauriers/carapace/pkg/session/provider"
 	"github.com/tdeslauriers/carapace/pkg/sign"
 )
@@ -139,6 +141,7 @@ func New(config *config.Config) (Manager, error) {
 		identity:         identity,
 		allowance:        allowances.NewService(repository, indexer, cryptor),
 		template:         templates.NewService(repository),
+		task:             tasks.NewService(repository),
 
 		logger: slog.Default().
 			With(slog.String(util.ServiceKey, util.ServiceApprentice)).
@@ -160,6 +163,8 @@ type manager struct {
 	identity         connect.S2sCaller
 	allowance        allowances.Service
 	template         templates.Service
+	task             tasks.Service
+	cleanup          schedule.Cleanup
 
 	logger *slog.Logger
 }
@@ -177,7 +182,7 @@ func (m *manager) Run() error {
 	allowance := allowances.NewHandler(m.allowance, m.s2sVerifier, m.iamVerifier, m.s2sTokenProvider, m.identity)
 
 	// templates
-	template := templates.NewHandler(m.template, m.allowance, m.s2sVerifier, m.iamVerifier, m.s2sTokenProvider, m.identity)
+	template := templates.NewHandler(m.template, m.allowance, m.task, m.s2sVerifier, m.iamVerifier, m.s2sTokenProvider, m.identity)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", diagnostics.HealthCheckHandler)
@@ -188,6 +193,7 @@ func (m *manager) Run() error {
 
 	// templates
 	mux.HandleFunc("/templates/assignees", template.HandleGetAssignees)
+	mux.HandleFunc("/templates", template.HandleTemplates)
 
 	managerServer := &connect.TlsServer{
 		Addr:      m.config.ServicePort,
@@ -202,6 +208,8 @@ func (m *manager) Run() error {
 			m.logger.Error(fmt.Sprintf("failed to start %s task management service: %v", m.config.ServiceName, err))
 		}
 	}()
+
+	m.cleanup.ExpiredS2s()
 
 	return nil
 }
