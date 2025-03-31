@@ -61,7 +61,7 @@ func (s *taskService) CreateTask() (*Task, error) {
 	}
 
 	// create the task record
-	task := &Task{
+	task := Task{
 		Id:             id.String(),
 		CreatedAt:      data.CustomTime{Time: time.Now().UTC()},
 		IsComplete:     false,
@@ -72,7 +72,7 @@ func (s *taskService) CreateTask() (*Task, error) {
 	}
 
 	// insert the task record into the database
-	qry := `INSERT INTO tasks (uuid, created_at, is_complete, is_satisfactory, is_proactive, slug, is_archived)
+	qry := `INSERT INTO task (uuid, created_at, is_complete, is_satisfactory, is_proactive, slug, is_archived)
 			VALUES (?, ?, ?, ?, ?, ?, ?)`
 	if err := s.db.InsertRecord(qry, task); err != nil {
 		errMsg := fmt.Sprintf("failed to insert task record: %v", err)
@@ -80,14 +80,16 @@ func (s *taskService) CreateTask() (*Task, error) {
 		return nil, fmt.Errorf(errMsg)
 	}
 
-	return task, nil
+	s.logger.Info(fmt.Sprintf("successfully created task record with slug %s", task.Slug))
+
+	return &task, nil
 }
 
 // CreateAllowanceXref is a concrete implementation of the CreateAllowanceXref method in the TaskService interface
 func (s *taskService) CreateAllowanceXref(t *Task, a *tasks.Allowance) (*TaskAllowanceXref, error) {
 
 	// create the new xref record
-	xref := &TaskAllowanceXref{
+	xref := TaskAllowanceXref{
 		TaskId:      t.Id,
 		AllowanceId: a.Id,
 		CreatedAt:   data.CustomTime{Time: time.Now().UTC()},
@@ -102,5 +104,7 @@ func (s *taskService) CreateAllowanceXref(t *Task, a *tasks.Allowance) (*TaskAll
 		return nil, fmt.Errorf(errMsg)
 	}
 
-	return xref, nil
+	s.logger.Info(fmt.Sprintf("successfully created xref record between task %s and allowance %s", t.Slug, a.Username))
+
+	return &xref, nil
 }

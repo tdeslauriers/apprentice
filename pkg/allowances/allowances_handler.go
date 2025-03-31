@@ -81,44 +81,15 @@ func (h *allowancesHandler) HandleAllowances(w http.ResponseWriter, r *http.Requ
 
 func (h *allowancesHandler) HandleAllowance(w http.ResponseWriter, r *http.Request) {
 
-	// break path into segments
-	segments := strings.Split(r.URL.Path, "/")
-
-	var slug string
-	if len(segments) > 1 {
-		slug = segments[len(segments)-1]
-	} else {
-		errMsg := "no user slug provided in get /allowances/{slug} request"
-		h.logger.Error(errMsg)
-		e := connect.ErrorHttp{
-			StatusCode: http.StatusBadRequest,
-			Message:    errMsg,
-		}
-		e.SendJsonErr(w)
-		return
-	}
-
-	// lightweight validation of slug
-	if len(slug) < 16 || len(slug) > 64 {
-		errMsg := "invalid user slug provided in get /allowances/{slug} request"
-		h.logger.Error(errMsg)
-		e := connect.ErrorHttp{
-			StatusCode: http.StatusBadRequest,
-			Message:    errMsg,
-		}
-		e.SendJsonErr(w)
-		return
-	}
-
 	switch r.Method {
 	case http.MethodGet:
-		h.handleGetAllownace(w, r, slug)
+		h.handleGetAllownace(w, r)
 		return
 	case http.MethodPost:
-		h.handleUpdateAllowance(w, r, slug)
+		h.handleUpdateAllowance(w, r)
 		return
 	default:
-		h.logger.Error(fmt.Sprintf("only GET and POST requests are allowed to /allowances/%s endpoint", slug))
+		h.logger.Error("only GET and POST requests are allowed to /allowances/{slug} endpoint")
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusMethodNotAllowed,
 			Message:    "only GET requests are allowed to /allowances/{slug} endpoint",
@@ -168,7 +139,7 @@ func (h *allowancesHandler) handleGetAll(w http.ResponseWriter, r *http.Request)
 	}
 }
 
-func (h *allowancesHandler) handleGetAllownace(w http.ResponseWriter, r *http.Request, slug string) {
+func (h *allowancesHandler) handleGetAllownace(w http.ResponseWriter, r *http.Request) {
 
 	// validate s2s token
 	svcToken := r.Header.Get("Service-Authorization")
@@ -183,6 +154,18 @@ func (h *allowancesHandler) handleGetAllownace(w http.ResponseWriter, r *http.Re
 	if _, err := h.iam.BuildAuthorized(getAllowancesAllowed, accessToken); err != nil {
 		h.logger.Error(fmt.Sprintf("/allowance handler failed to authorize iam token: %s", err.Error()))
 		connect.RespondAuthFailure(connect.User, err, w)
+		return
+	}
+
+	// get the url slug from the request
+	slug, err := connect.GetValidSlug(r)
+	if err != nil {
+		h.logger.Error(fmt.Sprintf("failed to get valid slug from request: %s", err.Error()))
+		e := connect.ErrorHttp{
+			StatusCode: http.StatusBadRequest,
+			Message:    "invalid service client slug",
+		}
+		e.SendJsonErr(w)
 		return
 	}
 
@@ -368,7 +351,7 @@ func (h *allowancesHandler) handleCreate(w http.ResponseWriter, r *http.Request)
 	}
 }
 
-func (h *allowancesHandler) handleUpdateAllowance(w http.ResponseWriter, r *http.Request, slug string) {
+func (h *allowancesHandler) handleUpdateAllowance(w http.ResponseWriter, r *http.Request) {
 
 	// validate s2s token
 	svcToken := r.Header.Get("Service-Authorization")
@@ -384,6 +367,18 @@ func (h *allowancesHandler) handleUpdateAllowance(w http.ResponseWriter, r *http
 	if err != nil {
 		h.logger.Error(fmt.Sprintf("/allowance handler failed to authorize iam token: %s", err.Error()))
 		connect.RespondAuthFailure(connect.User, err, w)
+		return
+	}
+
+	// get the url slug from the request
+	slug, err := connect.GetValidSlug(r)
+	if err != nil {
+		h.logger.Error(fmt.Sprintf("failed to get valid slug from request: %s", err.Error()))
+		e := connect.ErrorHttp{
+			StatusCode: http.StatusBadRequest,
+			Message:    "invalid service client slug",
+		}
+		e.SendJsonErr(w)
 		return
 	}
 

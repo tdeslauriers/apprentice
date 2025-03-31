@@ -140,7 +140,7 @@ func New(config *config.Config) (Manager, error) {
 		iamVerifier:      jwt.NewVerifier(config.ServiceName, iamPublicKey),
 		identity:         identity,
 		allowance:        allowances.NewService(repository, indexer, cryptor),
-		template:         templates.NewService(repository),
+		template:         templates.NewService(repository, cryptor),
 		task:             tasks.NewService(repository),
 		cleanup:          schedule.NewCleanup(repository),
 
@@ -195,6 +195,7 @@ func (m *manager) Run() error {
 	// templates
 	mux.HandleFunc("/templates/assignees", template.HandleGetAssignees)
 	mux.HandleFunc("/templates", template.HandleTemplates)
+	mux.HandleFunc("/templates/", template.HandleTemplate)
 
 	managerServer := &connect.TlsServer{
 		Addr:      m.config.ServicePort,

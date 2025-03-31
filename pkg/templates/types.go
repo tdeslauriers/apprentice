@@ -12,9 +12,9 @@ type Service interface {
 }
 
 // NewService creates a new Service interface, returning a pointer to the concrete implementation
-func NewService(sql data.SqlRepository) Service {
+func NewService(sql data.SqlRepository, c data.Cryptor) Service {
 	return &service{
-		TemplateService:      NewTemplateService(sql),
+		TemplateService:      NewTemplateService(sql, c),
 		TemplateErrorService: NewTemplateErrorService(),
 	}
 }
@@ -37,6 +37,19 @@ type Template struct {
 	Slug        string          `db:"slug"`
 	CreatedAt   data.CustomTime `db:"created_at"`
 	IsArchived  bool            `db:"is_archived"`
+}
+
+// TemplateAssignee is a struct that represents a template + allowance db join query row result
+type TemplateAssignee struct {
+	Id          string          `db:"uuid"`
+	Name        string          `db:"name"`
+	Description string          `db:"description"`
+	Cadence     tasks.Cadence   `db:"cadence"`
+	Category    tasks.Category  `db:"category"`
+	Slug        string          `db:"slug"`
+	CreatedAt   data.CustomTime `db:"created_at"`
+	IsArchived  bool            `db:"is_archived"`
+	Username    string          `db:"username"`
 }
 
 // AllowanceTemplateXref is a model that represents a many-to-many relationship
