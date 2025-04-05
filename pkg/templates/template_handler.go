@@ -152,6 +152,9 @@ func (h *handler) HandleTemplate(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		h.getTemplate(w, r)
 		return
+	case http.MethodPost:
+		h.postTemplate(w, r)
+		return
 	default:
 		h.logger.Error(fmt.Sprintf("/template/slug handler received unsupported method: %s", r.Method))
 		e := connect.ErrorHttp{
@@ -494,4 +497,264 @@ func (h *handler) getTemplate(w http.ResponseWriter, r *http.Request) {
 		e.SendJsonErr(w)
 		return
 	}
+}
+
+// postTemplate is a concrete impl of a handler for the POST /template/slug endpoint
+// it validates the incoming request, and then calls the template service to update a template
+func (h *handler) postTemplate(w http.ResponseWriter, r *http.Request) {
+
+	// validate s2s token
+	svcToken := r.Header.Get("Service-Authorization")
+	if _, err := h.s2s.BuildAuthorized(writeTemplatesAllowed, svcToken); err != nil {
+		h.logger.Error(fmt.Sprintf("/template/slug handler failed to authorize service token: %v", err))
+		connect.RespondAuthFailure(connect.S2s, err, w)
+		return
+	}
+
+	// validate iam token
+	accessToken := r.Header.Get("Authorization")
+	if _, err := h.iam.BuildAuthorized(writeTemplatesAllowed, accessToken); err != nil {
+		h.logger.Error(fmt.Sprintf("/template/slug handler failed to authorize iam token: %v", err))
+		connect.RespondAuthFailure(connect.User, err, w)
+		return
+	}
+
+	// get slug from the request url
+	slug, err := connect.GetValidSlug(r)
+	if err != nil {
+		h.logger.Error(fmt.Sprintf("/template/slug handler failed to get valid slug: %v", err))
+		e := connect.ErrorHttp{
+			StatusCode: http.StatusBadRequest,
+			Message:    "failed to get valid slug",
+		}
+		e.SendJsonErr(w)
+		return
+	}
+
+	// get existing record via slug lookup
+	// no reason to parse/decode request body if slug is not real value
+	template, err := h.template.GetTemplate(slug)
+	if err != nil {
+		h.logger.Error(fmt.Sprintf("/template/slug handler failed to get template: %v", err))
+		h.template.HandleServiceError(w, err)
+		return
+	}
+
+	// decode request body
+	var cmd exotasks.TemplateCmd
+	if err := json.NewDecoder(r.Body).Decode(&cmd); err != nil {
+		h.logger.Error(fmt.Sprintf("/template/slug handler failed to decode request body: %v", err))
+		e := connect.ErrorHttp{
+			StatusCode: http.StatusBadRequest,
+			Message:    "failed to decode request body",
+		}
+		e.SendJsonErr(w)
+		return
+	}
+
+	// validate request body
+	if err := cmd.ValidateCmd(); err != nil {
+		h.logger.Error(fmt.Sprintf("/template/slug handler failed to validate request body: %v", err))
+		e := connect.ErrorHttp{
+			StatusCode: http.StatusUnprocessableEntity,
+			Message:    err.Error(),
+		}
+		e.SendJsonErr(w)
+		return
+	}
+
+	// validate cadence
+	if err := cmd.Cadence.IsValidCadence(); err != nil {
+		h.logger.Error(fmt.Sprintf("/template/slug handler failed to validate cadence: %v", err))
+		e := connect.ErrorHttp{
+			StatusCode: http.StatusUnprocessableEntity,
+			Message:    err.Error(),
+		}
+		e.SendJsonErr(w)
+		return
+	}
+
+	// validate category
+	if err := cmd.Category.IsValidCategory(); err != nil {
+		h.logger.Error(fmt.Sprintf("/template/slug handler failed to validate category: %v", err))
+		e := connect.ErrorHttp{
+			StatusCode: http.StatusUnprocessableEntity,
+			Message:    err.Error(),
+		}
+		e.SendJsonErr(w)
+		return
+	}
+
+	// get assignees from database
+	// ie, it checks if the emails submitted in the request body are valid and allowed
+	existing, missing, err := h.allowance.GetValidUsers(cmd.Assignees)
+	if err != nil {
+		h.logger.Error(fmt.Sprintf("/templates handler failed to get valid assignees: %v", err))
+		h.allowance.HandleAllowanceError(w, err)
+		return
+	}
+
+	if len(missing) > 0 {
+		h.logger.Error(fmt.Sprintf("/templates handler found missing assignees: %v", missing))
+		e := connect.ErrorHttp{
+			StatusCode: http.StatusUnprocessableEntity,
+			Message:    "failed to update task template due to invalid assignees: " + fmt.Sprintf("%v", strings.Join(missing, ", ")),
+		}
+		e.SendJsonErr(w)
+		return
+	}
+
+	// prepare the template for update\
+	updated := Template{
+		Id:          template.Id, // not allowed to update
+		Name:        cmd.Name,
+		Description: cmd.Description,
+		Cadence:     cmd.Cadence,
+		Category:    cmd.Category,
+		Slug:        template.Slug,      // not allowed to update
+		CreatedAt:   template.CreatedAt, // not allowed to update
+		IsArchived:  cmd.IsArchived,
+	}
+
+	// compare new user assignees to existing
+	// if the template.Assignees not in 'existing', delete the xrefs
+	// if the 'existing' usernames not in template.Assignees, add the xrefs
+	var (
+		toDelete = make(map[string]bool, len(template.Assignees)) // key is username
+		toAdd    = make(map[string]bool, len(existing))           // key is allowance uuid
+	)
+
+	// loop for template_allowance records to remove
+	for _, assigned := range template.Assignees {
+		exists := false
+		for _, allowance := range existing {
+			if assigned.Username == allowance.Username {
+				exists = true
+				break
+			}
+		}
+		if !exists {
+			toDelete[assigned.Username] = true
+		}
+	}
+
+	// loop for new assignees to add
+	for _, allowance := range existing {
+		exists := false
+		for _, assigned := range template.Assignees {
+			if assigned.Username == allowance.Username {
+				exists = true
+				break
+			}
+		}
+		if !exists {
+			toAdd[allowance.Id] = true
+		}
+	}
+
+	// make database updates concurrently
+	var (
+		wgDb  sync.WaitGroup
+		errDb = make(chan error, len(toDelete)+len(toAdd))
+	)
+
+	// update the template record
+	wgDb.Add(1)
+	go func(t *Template, errDb chan error, wgDb *sync.WaitGroup) {
+		defer wgDb.Done()
+		if err := h.template.UpdateTemplate(t); err != nil {
+			errDb <- err
+			return
+		}
+	}(&updated, errDb, &wgDb)
+
+	// delete the xref records if applicable
+	if len(toDelete) > 0 {
+		for username := range toDelete {
+
+			wgDb.Add(1)
+			go func(username string, errDb chan error, wgDb *sync.WaitGroup) {
+				defer wgDb.Done()
+
+				// get the allowance record from the database
+				a, err := h.allowance.GetByUser(username)
+				if err != nil {
+					errDb <- err
+					return
+				}
+
+				// delete the xref record between template and allowance
+				if err := h.template.DeleteAllowanceXref(&updated, a); err != nil {
+					errDb <- err
+					return
+				}
+			}(username, errDb, &wgDb)
+		}
+	}
+
+	// add the xref records if applicable
+	if len(toAdd) > 0 {
+		for allowanceId := range toAdd {
+			wgDb.Add(1)
+			go func(allowanceId string, errDb chan error, wgDb *sync.WaitGroup) {
+				defer wgDb.Done()
+
+				if _, err := h.template.CreateAllowanceXref(&updated, &exotasks.Allowance{Id: allowanceId}); err != nil {
+					errDb <- err
+					return
+				}
+			}(allowanceId, errDb, &wgDb)
+		}
+	}
+
+	// wait for all goroutines to finish
+	// close the error channel
+	wgDb.Wait()
+	close(errDb)
+
+	// check for errors in the database updates
+	errCount := len(errDb)
+	if errCount > 0 {
+		var sb strings.Builder
+		counter := 0
+		for err := range errDb {
+			sb.WriteString(err.Error())
+			if counter < errCount {
+				sb.WriteString("; ")
+			}
+			counter++
+		}
+
+		h.logger.Error(fmt.Sprintf("/template/slug handler failed to update template in database: %s", sb.String()))
+		e := connect.ErrorHttp{
+			StatusCode: http.StatusInternalServerError,
+			Message:    "failed to update template",
+		}
+		e.SendJsonErr(w)
+		return
+	}
+
+	// log audit trail (template record only: xrefs are logged in service upon creation/deletion)
+	if template.Name != updated.Name {
+		h.logger.Info(fmt.Sprintf("/template/slug handler updated template name from %s to %s", template.Name, updated.Name))
+	}
+
+	if template.Description != updated.Description {
+		h.logger.Info(fmt.Sprintf("/template/slug handler updated template description from %s to %s", template.Description, updated.Description))
+	}
+
+	if template.Cadence != updated.Cadence {
+		h.logger.Info(fmt.Sprintf("/template/slug handler updated template cadence from %s to %s", template.Cadence, updated.Cadence))
+	}
+
+	if template.Category != updated.Category {
+		h.logger.Info(fmt.Sprintf("/template/slug handler updated template category from %s to %s", template.Category, updated.Category))
+	}
+
+	if template.IsArchived != updated.IsArchived {
+		h.logger.Info(fmt.Sprintf("/template/slug handler updated template is_archived from %t to %t", template.IsArchived, updated.IsArchived))
+	}
+
+	// return no content
+	w.WriteHeader(http.StatusNoContent)
 }

@@ -2,15 +2,15 @@
 
 # variables
 NAMESPACE="world"
-SECRET_NAME="secret-allowance-db-client-cert"
+SECRET_NAME="secret-apprentice-client-cert"
 
 # get certificate and key from 1Password
-CLIENT_CERT=$(op document get "apprentice_db_client_prod_cert" --vault world_site | base64 -w 0)
-CLIENT_KEY=$(op document get "apprentice_db_client_prod_key" --vault world_site | base64 -w 0)
+CLIENT_CERT=$(op document get "apprentice_service_client_prod_cert" --vault world_site | base64 -w 0)
+CLIENT_KEY=$(op document get "apprentice_service_client_prod_key" --vault world_site | base64 -w 0)
 
 # check if values are retrieved successfully
 if [[ -z "$CLIENT_CERT" || -z "$CLIENT_KEY" ]]; then
-  echo "Error: failed to get apprentice prod db client certificate or key from 1Password."
+  echo "Error: failed to get allowance prod client certificate or key from 1Password."
   exit 1
 fi
 
@@ -20,4 +20,3 @@ kubectl create secret generic $SECRET_NAME \
   --from-literal=client-cert="$CLIENT_CERT" \
   --from-literal=client-key="$CLIENT_KEY" \
   --dry-run=client -o yaml | kubectl apply -f -
-

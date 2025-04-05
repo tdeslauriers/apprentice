@@ -39,22 +39,22 @@ spec:
             - name: APPRENTICE_SERVER_CERT
               valueFrom:
                 secretKeyRef:
-                  name: secret-allowance-server-cert
+                  name: secret-apprentice-server-cert
                   key: server-cert
             - name: APPRENTICE_SERVER_KEY
               valueFrom:
                 secretKeyRef:
-                  name: secret-allowance-server-cert
+                  name: secret-apprentice-server-cert
                   key: server-key
             - name: APPRENTICE_CLIENT_CERT
               valueFrom:
                 secretKeyRef:
-                  name: secret-identity-client-cert
+                  name: secret-apprentice-client-cert
                   key: client-cert
             - name: APPRENTICE_CLIENT_KEY
               valueFrom:
                 secretKeyRef:
-                  name: secret-identity-client-cert
+                  name: secret-apprentice-client-cert
                   key: client-key
             - name: APPRENTICE_S2S_AUTH_URL
               valueFrom:
@@ -79,12 +79,12 @@ spec:
             - name: APPRENTICE_DB_CLIENT_CERT
               valueFrom:
                 secretKeyRef:
-                  name: secret-allowance-db-client-cert
+                  name: secret-apprentice-db-client-cert
                   key: client-cert
             - name: APPRENTICE_DB_CLIENT_KEY
               valueFrom:
                 secretKeyRef:
-                  name: secret-allowance-db-client-cert
+                  name: secret-apprentice-db-client-cert
                   key: client-key
             - name: APPRENTICE_DATABASE_URL
               valueFrom:

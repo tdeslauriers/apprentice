@@ -1,8 +1,11 @@
 package templates
 
 import (
+	"fmt"
+
 	"github.com/tdeslauriers/carapace/pkg/data"
 	"github.com/tdeslauriers/carapace/pkg/tasks"
+	"github.com/tdeslauriers/carapace/pkg/validate"
 )
 
 // Service is an interface that aggregates all template services functionality
@@ -37,6 +40,44 @@ type Template struct {
 	Slug        string          `db:"slug"`
 	CreatedAt   data.CustomTime `db:"created_at"`
 	IsArchived  bool            `db:"is_archived"`
+}
+
+// Validate checks the template struct for valid values
+func (t *Template) Validate() error {
+
+	// uuid
+	if !validate.IsValidUuid(t.Id) {
+		return fmt.Errorf("invalid template id")
+	}
+
+	// name
+	if len(t.Name) < 2 || len(t.Name) > 64 {
+		return fmt.Errorf("invalid template name, must be between 2 and 64 characters")
+	}
+
+	// description
+	if len(t.Description) < 2 || len(t.Description) > 255 {
+		return fmt.Errorf("invalid template description, must be between 2 and 255 characters")
+	}
+
+	// cadence
+	if err := t.Cadence.IsValidCadence(); err != nil {
+		return err
+	}
+
+	// category
+	if err := t.Category.IsValidCategory(); err != nil {
+		return err
+	}
+
+	// slug
+	if !validate.IsValidUuid(t.Slug) {
+		return fmt.Errorf("invalid template slug")
+	}
+
+	// created_at will not be updated ever so no need to validate
+
+	return nil
 }
 
 // TemplateAssignee is a struct that represents a template + allowance db join query row result

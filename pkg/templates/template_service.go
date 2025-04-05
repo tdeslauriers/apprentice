@@ -29,8 +29,14 @@ type TemplateService interface {
 	// CreateTemplate creates a new template record in the database
 	CreateTemplate(cmd exotasks.TemplateCmd) (*Template, error)
 
+	// UpdateTemplate updates a template record in the database
+	UpdateTemplate(t *Template) error
+
 	// CreateAllowanceXref creates a new allowance-template xref record in the database
 	CreateAllowanceXref(t *Template, a *exotasks.Allowance) (*AllowanceTemplateXref, error)
+
+	// DeleteAllowanceXref deletes an allowance-template xref record from the database
+	DeleteAllowanceXref(t *Template, a *exotasks.Allowance) error
 
 	// CreateTaskXref creates a new task-template xref record in the database
 	CreateTaskXref(t *Template, ta *tasks.Task) (*TemplateTaskXref, error)
@@ -328,6 +334,36 @@ func (s *templateService) CreateTemplate(cmd exotasks.TemplateCmd) (*Template, e
 	return &t, nil
 }
 
+// UpdateTemplate is a concrete implementation of the UpdateTemplate method in the TemplateService interface
+func (s *templateService) UpdateTemplate(t *Template) error {
+
+	// validate the template record
+	// redundant check, but good practice
+	if err := t.Validate(); err != nil {
+		errMsg := fmt.Sprintf("invalid template record: %v", err)
+		s.logger.Error(errMsg)
+		return fmt.Errorf(errMsg)
+	}
+
+	// update the template record in the database
+	qry := `UPDATE template
+			SET name = ?, 
+				description = ?, 
+				cadence = ?, 
+				category = ?, 
+				is_archived = ?
+			WHERE uuid = ?`
+	if err := s.db.UpdateRecord(qry, t.Name, t.Description, t.Cadence, t.Category, t.IsArchived, t.Id); err != nil {
+		errMsg := fmt.Sprintf("failed to update template record in db: %v", err)
+		s.logger.Error(errMsg)
+		return fmt.Errorf(errMsg)
+	}
+
+	s.logger.Info(fmt.Sprintf("successfully updated template record: %s", t.Id))
+
+	return nil
+}
+
 // CreateAllowanceXref is a concrete implementation of the CreateAllowanceXref method in the TemplateService interface
 func (s *templateService) CreateAllowanceXref(t *Template, a *exotasks.Allowance) (*AllowanceTemplateXref, error) {
 
@@ -349,6 +385,23 @@ func (s *templateService) CreateAllowanceXref(t *Template, a *exotasks.Allowance
 	s.logger.Info(fmt.Sprintf("successfully created xref record between allowance %s and template %s", a.Username, t.Name))
 
 	return &xref, nil
+}
+
+// DeleteAllowanceXref is a concrete implementation of the DeleteAllowanceXref method in the TemplateService interface
+func (s *templateService) DeleteAllowanceXref(t *Template, a *exotasks.Allowance) error {
+
+	// delete the xref record from the database
+	qry := `DELETE FROM template_allowance 
+			WHERE template_uuid = ? AND allowance_uuid = ?`
+	if err := s.db.DeleteRecord(qry, t.Id, a.Id); err != nil {
+		errMsg := fmt.Sprintf("failed to delete allowance-template xref record from db: %v", err)
+		s.logger.Error(errMsg)
+		return fmt.Errorf(errMsg)
+	}
+
+	s.logger.Info(fmt.Sprintf("successfully deleted xref record between allowance %s and template %s", a.Username, t.Name))
+
+	return nil
 }
 
 // CreateTaskXref is a concrete implementation of the CreateTaskXref method in the TemplateService interface
