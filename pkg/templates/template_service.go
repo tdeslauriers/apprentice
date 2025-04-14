@@ -20,7 +20,7 @@ import (
 // Service is an interface to handle template service functionality
 type TemplateService interface {
 
-	// GetTemplates retrieves a template record from the database including it's assignees.
+	// GetTemplates retrieves all active template from the database including it's assignees.
 	GetTemplates() ([]exotasks.Template, error)
 
 	// GetTemplate retrieves a template record from the database by slug including it's assignees.
@@ -66,6 +66,7 @@ type templateService struct {
 }
 
 // GetTemplates is a concrete implementation of the GetTemplates method in the TemplateService interface
+// it retrieves all active task templates from the database including their assignees
 func (s *templateService) GetTemplates() ([]exotasks.Template, error) {
 
 	qry := `
@@ -81,7 +82,8 @@ func (s *templateService) GetTemplates() ([]exotasks.Template, error) {
 			a.username
 		FROM template t 
 			LEFT OUTER JOIN template_allowance ta ON t.uuid = ta.template_uuid
-			LEFT OUTER JOIN allowance a ON ta.allowance_uuid = a.uuid`
+			LEFT OUTER JOIN allowance a ON ta.allowance_uuid = a.uuid
+		WHERE t.is_archived = FALSE`
 	var templates []TemplateAssignee
 	if err := s.db.SelectRecords(qry, &templates); err != nil {
 		errMsg := fmt.Sprintf("failed to retrieve all templates from db: %v", err)

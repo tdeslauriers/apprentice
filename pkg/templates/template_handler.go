@@ -756,5 +756,15 @@ func (h *handler) postTemplate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// return no content
-	w.WriteHeader(http.StatusNoContent)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if err := json.NewEncoder(w).Encode(updated); err != nil {
+		h.logger.Error(fmt.Sprintf("/template/slug handler failed to encode response: %v", err))
+		e := connect.ErrorHttp{
+			StatusCode: http.StatusInternalServerError,
+			Message:    "failed to encode response",
+		}
+		e.SendJsonErr(w)
+		return
+	}
 }
