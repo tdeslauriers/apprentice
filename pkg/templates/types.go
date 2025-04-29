@@ -32,14 +32,15 @@ type service struct {
 
 // Template is a struct that represents a template record in the database
 type Template struct {
-	Id          string          `db:"uuid"`
-	Name        string          `db:"name"`
-	Description string          `db:"description"`
-	Cadence     tasks.Cadence   `db:"cadence"`
-	Category    tasks.Category  `db:"category"`
-	Slug        string          `db:"slug"`
-	CreatedAt   data.CustomTime `db:"created_at"`
-	IsArchived  bool            `db:"is_archived"`
+	Id           string          `db:"uuid" json:"uuid,omitempty"`
+	Name         string          `db:"name" json:"name"`
+	Description  string          `db:"description" json:"description"`
+	Cadence      tasks.Cadence   `db:"cadence" json:"cadence"`
+	Category     tasks.Category  `db:"category" json:"category"`
+	IsCalculated bool            `db:"is_calculated" json:"is_calculated"`
+	Slug         string          `db:"slug" json:"slug"`
+	CreatedAt    data.CustomTime `db:"created_at" json:"created_at"`
+	IsArchived   bool            `db:"is_archived" json:"is_archived"`
 }
 
 // Validate checks the template struct for valid values
@@ -82,15 +83,16 @@ func (t *Template) Validate() error {
 
 // TemplateAssignee is a struct that represents a template + allowance db join query row result
 type TemplateAssignee struct {
-	Id          string          `db:"uuid"`
-	Name        string          `db:"name"`
-	Description string          `db:"description"`
-	Cadence     tasks.Cadence   `db:"cadence"`
-	Category    tasks.Category  `db:"category"`
-	Slug        string          `db:"slug"`
-	CreatedAt   data.CustomTime `db:"created_at"`
-	IsArchived  bool            `db:"is_archived"`
-	Username    string          `db:"username"`
+	Id           string          `db:"uuid"`
+	Name         string          `db:"name"`
+	Description  string          `db:"description"`
+	Cadence      tasks.Cadence   `db:"cadence"`
+	Category     tasks.Category  `db:"category"`
+	IsCalculated bool            `db:"is_calculated"`
+	Slug         string          `db:"slug"`
+	CreatedAt    data.CustomTime `db:"created_at"`
+	IsArchived   bool            `db:"is_archived"`
+	Username     string          `db:"username"`
 }
 
 // AllowanceTemplateXref is a model that represents a many-to-many relationship

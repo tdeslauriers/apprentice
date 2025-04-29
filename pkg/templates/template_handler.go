@@ -217,14 +217,35 @@ func (h *handler) handleGetTemplates(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// check that assignees were returned
+	if len(assignees) < 1 {
+		h.logger.Error(fmt.Sprintf("/templates/assignees handler failed to get assignees from identity service: %v", err))
+		e := connect.ErrorHttp{
+			StatusCode: http.StatusInternalServerError,
+			Message:    "failed to get assignees from identity service",
+		}
+		e.SendJsonErr(w)
+		return
+	}
+
+	assigneeMap := make(map[string]profile.User, len(assignees))
+	for _, a := range assignees {
+		assigneeMap[a.Username] = a
+	}
+
 	// hydrate the assignees records in the templates
-	for i, _ := range templates {
-		for j, _ := range templates[i].Assignees {
-			for _, a := range assignees {
-				if templates[i].Assignees[j].Username == a.Username {
-					templates[i].Assignees[j] = a
-					break
+	for i := range templates {
+		for j := range templates[i].Assignees {
+			if user, ok := assigneeMap[templates[i].Assignees[j].Username]; ok {
+				templates[i].Assignees[j] = user
+			} else {
+				h.logger.Error(fmt.Sprintf("/templates handler failed to hydrate assignee: %s", templates[i].Assignees[j].Username))
+				e := connect.ErrorHttp{
+					StatusCode: http.StatusInternalServerError,
+					Message:    "failed to hydrate assignee",
 				}
+				e.SendJsonErr(w)
+				return
 			}
 		}
 	}
@@ -380,14 +401,15 @@ func (h *handler) handlePostTemplates(w http.ResponseWriter, r *http.Request) {
 
 	// prepare response object
 	response := exotasks.Template{
-		Id:          template.Id,
-		Name:        template.Name,
-		Description: template.Description,
-		Cadence:     template.Cadence,
-		Category:    template.Category,
-		Slug:        template.Slug,
-		CreatedAt:   template.CreatedAt,
-		IsArchived:  template.IsArchived,
+		Id:           template.Id,
+		Name:         template.Name,
+		Description:  template.Description,
+		Cadence:      template.Cadence,
+		Category:     template.Category,
+		IsCalculated: template.IsCalculated,
+		Slug:         template.Slug,
+		CreatedAt:    template.CreatedAt,
+		IsArchived:   template.IsArchived,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -606,14 +628,15 @@ func (h *handler) postTemplate(w http.ResponseWriter, r *http.Request) {
 
 	// prepare the template for update\
 	updated := Template{
-		Id:          template.Id, // not allowed to update
-		Name:        cmd.Name,
-		Description: cmd.Description,
-		Cadence:     cmd.Cadence,
-		Category:    cmd.Category,
-		Slug:        template.Slug,      // not allowed to update
-		CreatedAt:   template.CreatedAt, // not allowed to update
-		IsArchived:  cmd.IsArchived,
+		Id:           template.Id, // not allowed to update
+		Name:         cmd.Name,
+		Description:  cmd.Description,
+		Cadence:      cmd.Cadence,
+		Category:     cmd.Category,
+		IsCalculated: cmd.IsCalculated,
+		Slug:         template.Slug,      // not allowed to update
+		CreatedAt:    template.CreatedAt, // not allowed to update
+		IsArchived:   cmd.IsArchived,
 	}
 
 	// compare new user assignees to existing
@@ -749,6 +772,10 @@ func (h *handler) postTemplate(w http.ResponseWriter, r *http.Request) {
 
 	if template.Category != updated.Category {
 		h.logger.Info(fmt.Sprintf("/template/slug handler updated template category from %s to %s", template.Category, updated.Category))
+	}
+
+	if template.IsCalculated != updated.IsCalculated {
+		h.logger.Info(fmt.Sprintf("/template/slug handler updated template is_calculated from %t to %t", template.IsCalculated, updated.IsCalculated))
 	}
 
 	if template.IsArchived != updated.IsArchived {

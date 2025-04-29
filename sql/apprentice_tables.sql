@@ -26,6 +26,7 @@ CREATE TABLE template (
     description VARCHAR(255),
     cadence VARCHAR(32),
     category VARCHAR(32),
+    is_calculated BOOLEAN NOT NULL,
     slug CHAR(36) NOT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT UTC_TIMESTAMP,
     is_archived BOOLEAN NOT NULL
@@ -36,12 +37,34 @@ CREATE TABLE task (
     uuid CHAR(36) PRIMARY KEY,
     created_at TIMESTAMP NOT NULL DEFAULT UTC_TIMESTAMP,
     is_complete BOOLEAN NOT NULL,
+    completed_at TIMESTAMP NUll,
     is_satisfactory BOOLEAN NOT NULL,
     is_proactive BOOLEAN NOT NULL,
     slug CHAR(36) NOT NULL,
     is_archived BOOLEAN NOT NULL
 );
 CREATE UNIQUE iNDEX idx_task_slug_index ON task (slug);
+
+CREATE TABLE permission (
+    uuid CHAR(36) PRIMARY KEY,
+    name VARCHAR(64) NOT NULL,
+    description VARCHAR(255) NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT UTC_TIMESTAMP,
+    active BOOLEAN NOT NULL,
+    slug CHAR(36) NOT NULL
+);
+CREATE UNIQUE iNDEX idx_permission_slug_index ON permission (slug);
+
+CREATE TABLE allowance_permission (
+    id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    allowance_uuid CHAR(36) NOT NULL,
+    permission_uuid CHAR(36) NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT UTC_TIMESTAMP,
+    CONSTRAINT fk_allowance_permission_uuid FOREIGN KEY (allowance_uuid) REFERENCES allowance (uuid),
+    CONSTRAINT fk_permission_allowance_uuid FOREIGN KEY (permission_uuid) REFERENCES permission (uuid)
+);
+CREATE INDEX idx_permission_allowance_xref ON allowance_permission (permission_uuid);
+CREATE INDEX idx_allowance_permission_xref ON allowance_permission (allowance_uuid);
 
 CREATE TABLE template_allowance (
     id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -75,6 +98,8 @@ CREATE TABLE template_task (
 );
 CREATE INDEX idx_task_template_xref ON template_task (task_uuid);
 CREATE INDEX idx_template_task_xref ON template_task(template_uuid);
+
+
 
 -- service token
 CREATE TABLE servicetoken (

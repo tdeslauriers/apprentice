@@ -1,6 +1,11 @@
 package tasks
 
-import "net/http"
+import (
+	"net/http"
+	"strings"
+
+	"github.com/tdeslauriers/carapace/pkg/connect"
+)
 
 // TaskErrorService is an interface to handle task error service functionality
 type TaskErrorService interface {
@@ -24,11 +29,20 @@ type taskErrorService struct {
 func (s *taskErrorService) HandleServiceError(w http.ResponseWriter, err error) {
 
 	switch {
-	case err.Error() == "invalid":
-		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+	case strings.Contains(err.Error(), "invalid"):
+		e := connect.ErrorHttp{
+			StatusCode: http.StatusUnprocessableEntity,
+			Message:    err.Error(),
+		}
+		e.SendJsonErr(w)
 		return
+
 	default:
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		e := connect.ErrorHttp{
+			StatusCode: http.StatusInternalServerError,
+			Message:    "internal server error",
+		}
+		e.SendJsonErr(w)
 		return
 	}
 }

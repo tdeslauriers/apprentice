@@ -76,6 +76,7 @@ func (s *templateService) GetTemplates() ([]exotasks.Template, error) {
 			t.description, 
 			t.cadence, 
 			t.category, 
+			t.is_calculated,
 			t.slug, 
 			t.created_at, 
 			t.is_archived,
@@ -130,18 +131,12 @@ func (s *templateService) GetTemplates() ([]exotasks.Template, error) {
 	close(errChan)
 
 	// check for any decryption errors
-	errCount := len(errChan)
-	if errCount > 0 {
-		var sb strings.Builder
-		counter := 0
+	if len(errChan) > 0 {
+		errs := make([]string, 0, len(errChan))
 		for err := range errChan {
-			sb.WriteString(fmt.Sprintf("%v", err))
-			if counter < errCount-1 {
-				sb.WriteString("; ")
-			}
-			counter++
+			errs = append(errs, fmt.Sprintf("%v", err))
 		}
-		errMsg := fmt.Sprintf("failed to decrypt %d username(s): %v", errCount, sb.String())
+		errMsg := fmt.Sprintf("failed to decrypt %d username(s): %v", len(errs), strings.Join(errs, "; "))
 		s.logger.Error(errMsg)
 		return nil, fmt.Errorf(errMsg)
 	}
@@ -151,15 +146,16 @@ func (s *templateService) GetTemplates() ([]exotasks.Template, error) {
 	for _, t := range templates {
 		if _, ok := uniqueTemplates[t.Id]; !ok {
 			uniqueTemplates[t.Id] = exotasks.Template{
-				Id:          t.Id,
-				Name:        t.Name,
-				Description: t.Description,
-				Cadence:     t.Cadence,
-				Category:    t.Category,
-				Slug:        t.Slug,
-				CreatedAt:   t.CreatedAt,
-				IsArchived:  t.IsArchived,
-				Assignees:   make([]profile.User, 0),
+				Id:           t.Id,
+				Name:         t.Name,
+				Description:  t.Description,
+				Cadence:      t.Cadence,
+				Category:     t.Category,
+				IsCalculated: t.IsCalculated,
+				Slug:         t.Slug,
+				CreatedAt:    t.CreatedAt,
+				IsArchived:   t.IsArchived,
+				Assignees:    make([]profile.User, 0),
 			}
 		}
 
@@ -200,6 +196,7 @@ func (s *templateService) GetTemplate(slug string) (*exotasks.Template, error) {
 		t.description, 
 		t.cadence, 
 		t.category, 
+		t.is_calculated,
 		t.slug, 
 		t.created_at, 
 		t.is_archived,
@@ -232,13 +229,13 @@ func (s *templateService) GetTemplate(slug string) (*exotasks.Template, error) {
 		go func(index int, ch chan error, wg *sync.WaitGroup) {
 			defer wg.Done()
 
-			decrypted, err := s.cryptor.DecryptServiceData(templates[i].Username)
+			decrypted, err := s.cryptor.DecryptServiceData(templates[index].Username)
 			if err != nil {
 				ch <- fmt.Errorf("%v", err)
 				return
 			}
 
-			templates[i].Username = string(decrypted)
+			templates[index].Username = string(decrypted)
 		}(i, errChan, &wg)
 	}
 
@@ -246,32 +243,28 @@ func (s *templateService) GetTemplate(slug string) (*exotasks.Template, error) {
 	close(errChan)
 
 	// check for any decryption errors
-	errCount := len(errChan)
-	if errCount > 0 {
-		var sb strings.Builder
-		counter := 0
+	if len(errChan) > 0 {
+		errs := make([]string, 0, len(errChan))
 		for err := range errChan {
-			sb.WriteString(fmt.Sprintf("%v", err))
-			if counter < errCount-1 {
-				sb.WriteString("; ")
-			}
-			counter++
+			errs = append(errs, fmt.Sprintf("%v", err))
 		}
-		errMsg := fmt.Sprintf("failed to decrypt %d username(s): %v", errCount, sb.String())
+		errMsg := fmt.Sprintf("failed to decrypt %d username(s): %v", len(errs), strings.Join(errs, "; "))
+		s.logger.Error(errMsg)
 		return nil, fmt.Errorf(errMsg)
 	}
 
 	// consolidate to unique template record with usernames slice
 	uniqueTemplate := exotasks.Template{
-		Id:          templates[0].Id,
-		Name:        templates[0].Name,
-		Description: templates[0].Description,
-		Cadence:     templates[0].Cadence,
-		Category:    templates[0].Category,
-		Slug:        templates[0].Slug,
-		CreatedAt:   templates[0].CreatedAt,
-		IsArchived:  templates[0].IsArchived,
-		Assignees:   make([]profile.User, 0),
+		Id:           templates[0].Id,
+		Name:         templates[0].Name,
+		Description:  templates[0].Description,
+		Cadence:      templates[0].Cadence,
+		Category:     templates[0].Category,
+		IsCalculated: templates[0].IsCalculated,
+		Slug:         templates[0].Slug,
+		CreatedAt:    templates[0].CreatedAt,
+		IsArchived:   templates[0].IsArchived,
+		Assignees:    make([]profile.User, 0),
 	}
 	for _, t := range templates {
 
@@ -323,8 +316,8 @@ func (s *templateService) CreateTemplate(cmd exotasks.TemplateCmd) (*Template, e
 		IsArchived:  false,
 	}
 
-	qry := `INSERT INTO template (uuid, name, description, cadence, category, slug, created_at, is_archived)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+	qry := `INSERT INTO template (uuid, name, description, cadence, category, is_calculated, slug, created_at, is_archived)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	if err := s.db.InsertRecord(qry, t); err != nil {
 		errMsg := fmt.Sprintf("failed to insert template record in to db: %v", err)
 		s.logger.Error(errMsg)
@@ -353,9 +346,10 @@ func (s *templateService) UpdateTemplate(t *Template) error {
 				description = ?, 
 				cadence = ?, 
 				category = ?, 
+				is_calculated = ?, 
 				is_archived = ?
 			WHERE uuid = ?`
-	if err := s.db.UpdateRecord(qry, t.Name, t.Description, t.Cadence, t.Category, t.IsArchived, t.Id); err != nil {
+	if err := s.db.UpdateRecord(qry, t.Name, t.Description, t.Cadence, t.Category, t.IsCalculated, t.IsArchived, t.Id); err != nil {
 		errMsg := fmt.Sprintf("failed to update template record in db: %v", err)
 		s.logger.Error(errMsg)
 		return fmt.Errorf(errMsg)

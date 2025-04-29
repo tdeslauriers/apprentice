@@ -3,6 +3,7 @@ package manager
 import (
 	"apprentice/internal/util"
 	"apprentice/pkg/allowances"
+	"apprentice/pkg/permissions"
 	"apprentice/pkg/tasks"
 	"apprentice/pkg/templates"
 	"crypto/tls"
@@ -141,7 +142,8 @@ func New(config *config.Config) (Manager, error) {
 		identity:         identity,
 		allowance:        allowances.NewService(repository, indexer, cryptor),
 		template:         templates.NewService(repository, cryptor),
-		task:             tasks.NewService(repository),
+		task:             tasks.NewService(repository, indexer, cryptor),
+		permissions:      permissions.NewService(repository, indexer),
 		cleanup:          schedule.NewCleanup(repository),
 
 		logger: slog.Default().
@@ -165,6 +167,7 @@ type manager struct {
 	allowance        allowances.Service
 	template         templates.Service
 	task             tasks.Service
+	permissions      permissions.Service
 	cleanup          schedule.Cleanup
 
 	logger *slog.Logger
@@ -185,6 +188,9 @@ func (m *manager) Run() error {
 	// templates
 	template := templates.NewHandler(m.template, m.allowance, m.task, m.s2sVerifier, m.iamVerifier, m.s2sTokenProvider, m.identity)
 
+	// tasks
+	task := tasks.NewHandler(m.task, m.allowance, m.permissions, m.s2sVerifier, m.iamVerifier, m.s2sTokenProvider, m.identity)
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", diagnostics.HealthCheckHandler)
 
@@ -196,6 +202,9 @@ func (m *manager) Run() error {
 	mux.HandleFunc("/templates/assignees", template.HandleGetAssignees)
 	mux.HandleFunc("/templates", template.HandleTemplates)
 	mux.HandleFunc("/templates/", template.HandleTemplate)
+
+	// tasks
+	mux.HandleFunc("/tasks", task.HandleTasks)
 
 	managerServer := &connect.TlsServer{
 		Addr:      m.config.ServicePort,
