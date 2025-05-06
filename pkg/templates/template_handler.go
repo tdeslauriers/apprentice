@@ -499,7 +499,7 @@ func (h *handler) getTemplate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// hydrate the assignees records in the template
-	for i, _ := range template.Assignees {
+	for i := range template.Assignees {
 		for _, a := range assignees {
 			if template.Assignees[i].Username == a.Username {
 				template.Assignees[i] = a

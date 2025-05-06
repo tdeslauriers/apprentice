@@ -4,14 +4,19 @@ import (
 	"apprentice/internal/util"
 	"apprentice/pkg/allowances"
 	"apprentice/pkg/permissions"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strings"
+	"sync"
+	"time"
 
 	"github.com/tdeslauriers/carapace/pkg/connect"
 	"github.com/tdeslauriers/carapace/pkg/jwt"
+	exoPermissions "github.com/tdeslauriers/carapace/pkg/permissions"
 	"github.com/tdeslauriers/carapace/pkg/profile"
 	"github.com/tdeslauriers/carapace/pkg/session/provider"
 	"github.com/tdeslauriers/carapace/pkg/tasks"
@@ -66,6 +71,9 @@ func (h *handler) HandleTasks(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		h.handleGetTasks(w, r)
+		return
+	case http.MethodPost:
+		h.handlePostTasks(w, r)
 		return
 	default:
 		h.logger.Error("only GET method is allowed to /tasks")
@@ -216,6 +224,245 @@ func (h *handler) handleGetTasks(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(ts); err != nil {
+		h.logger.Error(fmt.Sprintf("/tasks handler failed to send json response: %v", err))
+		e := connect.ErrorHttp{
+			StatusCode: http.StatusInternalServerError,
+			Message:    "internal server error",
+		}
+		e.SendJsonErr(w)
+		return
+	}
+}
+
+// handlePostTasks is a concrete implementation of the HandleTasks POST functionality.
+// It handles updating a task record status.
+func (h *handler) handlePostTasks(w http.ResponseWriter, r *http.Request) {
+
+	// validate s2s token
+	svcToken := r.Header.Get("Service-Authorization")
+	if _, err := h.s2s.BuildAuthorized(writeTasksAllowed, svcToken); err != nil {
+		h.logger.Error(fmt.Sprintf("/tasks handler failed to authorize s2s token: %v", err))
+		connect.RespondAuthFailure(connect.S2s, err, w)
+		return
+	}
+
+	// validate iam token
+	// need the princpal to determine fine grain permissions
+	iamToken := r.Header.Get("Authorization")
+	jot, err := h.iam.BuildAuthorized(writeTasksAllowed, iamToken)
+	if err != nil {
+		h.logger.Error(fmt.Sprintf("/tasks handler failed to authorize iam token: %v", err))
+		connect.RespondAuthFailure(connect.User, err, w)
+		return
+	}
+
+	// decode request body
+	var cmd tasks.TaskStatusCmd
+	if err := json.NewDecoder(r.Body).Decode(&cmd); err != nil {
+		h.logger.Error(fmt.Sprintf("/tasks handler failed to decode request body: %v", err))
+		e := connect.ErrorHttp{
+			StatusCode: http.StatusBadRequest,
+			Message:    fmt.Sprintf("failed to decode request body: %v", err),
+		}
+		e.SendJsonErr(w)
+		return
+	}
+
+	// validate request body
+	if err := cmd.ValidateCmd(); err != nil {
+		h.logger.Error(fmt.Sprintf("/tasks handler failed to validate request body: %v", err))
+		e := connect.ErrorHttp{
+			StatusCode: http.StatusUnprocessableEntity,
+			Message:    fmt.Sprintf("invalid request body: %v", err),
+		}
+		e.SendJsonErr(w)
+		return
+	}
+
+	var (
+		wg        sync.WaitGroup
+		errChan   = make(chan error, 2)
+		psMapChan = make(chan map[string]exoPermissions.Permission, 1)
+		taskChan  = make(chan TaskRecord, 1)
+	)
+
+	// get fine grain permissions map for query building
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
+		ps, _, err := h.permissions.GetPermissions(jot.Claims.Subject)
+		if err != nil {
+			h.logger.Error(fmt.Sprintf("/tasks handler failed to get %s's permissions: %v", jot.Claims.Subject, err))
+			errChan <- err
+			return
+		}
+		psMapChan <- ps
+	}()
+
+	// get the task recored with allowance
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		// get t record
+		t, err := h.svc.GetTask(cmd.TaskSlug)
+		if err != nil {
+			errChan <- err
+			return
+		}
+		if t == nil {
+			errChan <- err
+			return
+		}
+		taskChan <- *t
+	}()
+
+	wg.Wait()
+	close(errChan)
+	close(psMapChan)
+	close(taskChan)
+
+	// check for errors
+	if len(errChan) > 0 {
+		var errs []string
+		for err := range errChan {
+			errs = append(errs, err.Error())
+		}
+		errMsg := fmt.Sprintf("/task handler failed to get task (slug %s) record: %v", cmd.TaskSlug, strings.Join(errs, "; "))
+		h.logger.Error(errMsg)
+		e := connect.ErrorHttp{
+			StatusCode: http.StatusInternalServerError,
+			Message:    errMsg,
+		}
+		e.SendJsonErr(w)
+		return
+	}
+
+	psMap := <-psMapChan
+	task := <-taskChan
+
+	// check for permissions
+	_, isPayroll := psMap["payroll"]
+	_, isRemittee := psMap["remittee"]
+
+	// handle permission errors
+	if !isPayroll && !isRemittee {
+		errMsg := fmt.Sprintf("%s to update task slug (%s): %s", exoPermissions.UserForbidden, cmd.TaskSlug, jot.Claims.Subject)
+		h.logger.Error(errMsg)
+		e := connect.ErrorHttp{
+			StatusCode: http.StatusForbidden,
+			Message:    errMsg,
+		}
+		e.SendJsonErr(w)
+		return
+	}
+
+	if !isPayroll && (cmd.Status == "is_satisfactory" || cmd.Status == "is_proactive") {
+		errMsg := fmt.Sprintf("%s to update task (slug %s) status %s: %s", exoPermissions.UserForbidden, cmd.TaskSlug, cmd.Status, jot.Claims.Subject)
+		h.logger.Error(errMsg)
+		e := connect.ErrorHttp{
+			StatusCode: http.StatusForbidden,
+			Message:    errMsg,
+		}
+		e.SendJsonErr(w)
+		return
+	}
+
+	if !isPayroll && (task.Username != jot.Claims.Subject || !isRemittee) {
+		errMsg := fmt.Sprintf("%s to update task (slug %s): %s", exoPermissions.UserForbidden, cmd.TaskSlug, jot.Claims.Subject)
+		h.logger.Error(errMsg)
+		e := connect.ErrorHttp{
+			StatusCode: http.StatusForbidden,
+			Message:    errMsg,
+		}
+		e.SendJsonErr(w)
+		return
+	}
+
+	// prepare record by setting all fields to the current values
+	record := Task{
+		Id:             task.Id,
+		CreatedAt:      task.CreatedAt,
+		IsComplete:     task.IsComplete,
+		IsSatisfactory: task.IsSatisfactory,
+		IsProactive:    task.IsProactive,
+		Slug:           task.TaskSlug,
+		IsArchived:     task.IsArchived,
+	}
+
+	// get complated_at time if it exists and set it
+	ca, err := time.Parse("2006-01-02 15:04:05", task.CompletedAt)
+	if err == nil {
+		record.CompletedAt = sql.NullTime{
+			Time:  ca,
+			Valid: task.CompletedAt != "",
+		}
+	}
+
+	// handle status updates for satisfactory and proactive
+	if isPayroll {
+		if cmd.Status == "is_satisfactory" {
+			record.IsSatisfactory = !task.IsSatisfactory
+		} else {
+			record.IsSatisfactory = task.IsSatisfactory
+		}
+
+		if cmd.Status == "is_proactive" {
+			record.IsProactive = !task.IsProactive
+		} else {
+			record.IsProactive = task.IsProactive
+		}
+	}
+
+	// remittee can update their own task complete status, or payroll can update it
+	if cmd.Status == "is_complete" &&
+		(isPayroll || (isRemittee && task.Username == jot.Claims.Subject)) {
+
+		record.IsComplete = !task.IsComplete
+		if record.IsComplete {
+			record.CompletedAt = sql.NullTime{
+				Time:  time.Now().UTC(),
+				Valid: true,
+			}
+		} else {
+			record.CompletedAt = sql.NullTime{
+				Time:  time.Time{},
+				Valid: false,
+			}
+		}
+	}
+
+	if err := h.svc.UpdateTask(record); err != nil {
+		h.logger.Error(fmt.Sprintf("/tasks handler failed to update task (slug %s): %v", task.TaskSlug, err))
+		e := connect.ErrorHttp{
+			StatusCode: http.StatusInternalServerError,
+			Message:    fmt.Sprintf("failed to update task: %v", err),
+		}
+		e.SendJsonErr(w)
+		return
+	}
+
+	// audit trail logs
+	if record.IsComplete != task.IsComplete {
+		h.logger.Info(fmt.Sprintf("task (slug %s) is_complete status updated to %t by %s", task.TaskSlug, record.IsComplete, jot.Claims.Subject))
+		task.IsComplete = record.IsComplete // for return value
+	}
+
+	if record.IsSatisfactory != task.IsSatisfactory {
+		h.logger.Info(fmt.Sprintf("task (slug %s) is_satisfactory status updated to %t by %s", task.TaskSlug, record.IsSatisfactory, jot.Claims.Subject))
+		task.IsSatisfactory = record.IsSatisfactory // for return value
+	}
+
+	if record.IsProactive != task.IsProactive {
+		h.logger.Info(fmt.Sprintf("task (slug %s) is_proactive status updated to %t by %s", task.TaskSlug, record.IsProactive, jot.Claims.Subject))
+		task.IsProactive = record.IsProactive // for return value
+	}
+
+	fmt.Printf("RECORD: %+v\n", record)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if err := json.NewEncoder(w).Encode(task); err != nil {
 		h.logger.Error(fmt.Sprintf("/tasks handler failed to send json response: %v", err))
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusInternalServerError,

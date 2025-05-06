@@ -1,6 +1,8 @@
 package tasks
 
 import (
+	"database/sql"
+
 	"github.com/tdeslauriers/carapace/pkg/data"
 	"github.com/tdeslauriers/carapace/pkg/tasks"
 )
@@ -29,14 +31,14 @@ type service struct {
 
 // Task is a struct that represents a task record in the database
 type Task struct {
-	Id             string          `db:"uuid"`
-	CreatedAt      data.CustomTime `db:"created_at"`
-	IsComplete     bool            `db:"is_complete"`
-	CompletedAt    data.CustomTime `db:"completed_at"`
-	IsSatisfactory bool            `db:"is_satisfactory"`
-	IsProactive    bool            `db:"is_proactive"`
-	Slug           string          `db:"slug"`
-	IsArchived     bool            `db:"is_archived"`
+	Id             string          `db:"uuid" json:"id,omitempty"`
+	CreatedAt      data.CustomTime `db:"created_at" json:"created_at,omitempty"`
+	IsComplete     bool            `db:"is_complete" json:"is_complete"`
+	CompletedAt    sql.NullTime    `db:"completed_at" json:"completed_at,omitempty"`
+	IsSatisfactory bool            `db:"is_satisfactory" json:"is_satisfactory"`
+	IsProactive    bool            `db:"is_proactive" json:"is_proactive"`
+	Slug           string          `db:"slug" json:"slug,omitempty"`
+	IsArchived     bool            `db:"is_archived" json:"is_archived"`
 }
 
 // TaskAllowanceXref is a model that represents a many-to-many relationship
@@ -58,7 +60,7 @@ type TaskRecord struct {
 	Category       tasks.Category  `json:"category" db:"category"`                   // Task template category
 	CreatedAt      data.CustomTime `json:"created_at" db:"created_at"`               // Task record created at
 	IsComplete     bool            `json:"is_complete" db:"is_complete"`             // Task record field
-	CompletedAt    data.CustomTime `json:"completed_at,omitempty" db:"completed_at"` // Task record field
+	CompletedAt    string          `json:"completed_at,omitempty" db:"completed_at"` // Task record field
 	IsSatisfactory bool            `json:"is_satisfactory" db:"is_satisfactory"`     // Task record field
 	IsProactive    bool            `json:"is_proactive" db:"is_proactive"`           // Task record field
 	TaskSlug       string          `json:"task_slug,omitempty" db:"task_slug"`       // Task record slug

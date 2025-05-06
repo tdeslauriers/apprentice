@@ -2,6 +2,7 @@ package tasks
 
 import (
 	"apprentice/internal/util"
+	"database/sql"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -25,11 +26,17 @@ type TaskService interface {
 	// allow getting all tasks: it will filter for just that user's tasks
 	GetTasks(username string, paramas url.Values, permissions map[string]permissions.Permission) ([]TaskRecord, error)
 
+	// GetTask retrieves a single task record from the database including its template data and allowance username + slug
+	GetTask(slug string) (*TaskRecord, error)
+
 	// CreateTask creates a new task record in the database
 	CreateTask() (*Task, error)
 
 	// CreateAllowanceXref creates a new allowance-task xref record in the database
 	CreateAllowanceXref(t *Task, a *tasks.Allowance) (*TaskAllowanceXref, error)
+
+	// UpdateTask updates a task record in the database
+	UpdateTask(t Task) error
 }
 
 // NewTaskService creates a new TaskService interface, returning a pointer to the concrete implementation
@@ -75,29 +82,39 @@ func (s *taskService) GetTasks(username string, params url.Values, permissions m
 
 	// decrypt usernames
 	var (
-		mu sync.Mutex
-		wg sync.WaitGroup
+		taskUserMutex      sync.Mutex
+		taskAllowanceMutex sync.Mutex
+		userMutex          sync.Mutex
+		allowanceMutex     sync.Mutex
+		wg                 sync.WaitGroup
 
 		// so we dont have to repeat the same decryption
-		// key is encrypted username, value is decrypted username
-		cache = make(map[string]string)
+		// key is encrypted username/allowance slug, value is decrypted username/allowance slug
+		usernameCache  = make(map[string]string)
+		allowanceCache = make(map[string]string)
 
 		errChan = make(chan error, len(tasks))
 	)
 
 	for i := range tasks {
+
+		// decrypted username
 		wg.Add(1)
 		go func(task *TaskRecord, ch chan error, wg *sync.WaitGroup) {
 			defer wg.Done()
-			
+
 			// check if the username is already in the cache
-			mu.Lock()
-			if username, ok := cache[task.Username]; ok {
-				mu.Unlock()
+			userMutex.Lock()
+			if username, ok := usernameCache[task.Username]; ok {
+				userMutex.Unlock()
+
+				// update the task with the decrypted username
+				taskUserMutex.Lock()
 				task.Username = username
+				taskUserMutex.Unlock()
 				return
 			}
-			mu.Unlock()
+			userMutex.Unlock()
 
 			// if not, decrypt the username
 			decrypted, err := s.cryptor.DecryptServiceData(task.Username)
@@ -106,12 +123,50 @@ func (s *taskService) GetTasks(username string, params url.Values, permissions m
 				return
 			}
 			// update the cache of decrypted usernames
-			mu.Lock()
-			cache[task.Username] = string(decrypted)
-			mu.Unlock()
+			userMutex.Lock()
+			usernameCache[task.Username] = string(decrypted)
+			userMutex.Unlock()
 
 			// update the task with the decrypted username
+			taskUserMutex.Lock()
 			task.Username = string(decrypted)
+			taskUserMutex.Unlock()
+
+		}(&tasks[i], errChan, &wg)
+
+		// decrypted allowance slug
+		wg.Add(1)
+		go func(task *TaskRecord, ch chan error, wg *sync.WaitGroup) {
+			defer wg.Done()
+
+			// check if the allowance slug is already in the cache
+			allowanceMutex.Lock()
+			if slug, ok := allowanceCache[task.AllowanceSlug]; ok {
+				allowanceMutex.Unlock()
+
+				// update the task with the decrypted allowance slug
+				taskAllowanceMutex.Lock()
+				task.AllowanceSlug = slug
+				taskAllowanceMutex.Unlock()
+				return
+			}
+			allowanceMutex.Unlock()
+
+			// if not, decrypt the allowance slug
+			decrypted, err := s.cryptor.DecryptServiceData(task.AllowanceSlug)
+			if err != nil {
+				errChan <- fmt.Errorf("failed to decrypt allowance slug for task %s: %v", task.Id, err)
+				return
+			}
+			// update the cache of decrypted allowance
+			allowanceMutex.Lock()
+			allowanceCache[task.AllowanceSlug] = string(decrypted)
+			allowanceMutex.Unlock()
+
+			// update the task with the decrypted allowance slug
+			taskAllowanceMutex.Lock()
+			task.AllowanceSlug = string(decrypted)
+			taskAllowanceMutex.Unlock()
 
 		}(&tasks[i], errChan, &wg)
 	}
@@ -129,6 +184,99 @@ func (s *taskService) GetTasks(username string, params url.Values, permissions m
 	}
 
 	return tasks, nil
+}
+
+// GetTask is a concrete implementation of the GetTask method in the TaskService interface
+// it retrieves a single task record from the database including its template data and allowance username + slug
+func (s *taskService) GetTask(slug string) (*TaskRecord, error) {
+
+	// quick validation of slug
+	if len(slug) < 16 || len(slug) > 64 {
+		return nil, fmt.Errorf("invalid task slug")
+	}
+
+	// build the query string
+	qry := `SELECT
+				tsk.uuid,
+				tmp.name,
+				tmp.description,
+				tmp.cadence,
+				tmp.category,
+				tsk.created_at,
+				tsk.is_complete,
+				COALESCE(tsk.completed_at, '') AS completed_at,
+				tsk.is_satisfactory,
+				tsk.is_proactive,
+				tsk.slug AS task_slug,
+				tsk.is_archived,
+				a.username,
+				a.slug AS allowance_slug
+			FROM task tsk
+				LEFT OUTER JOIN template_task tt ON tsk.uuid = tt.task_uuid
+				LEFT OUTER JOIN template tmp ON tt.template_uuid = tmp.uuid
+				LEFT OUTER JOIN task_allowance ta ON tsk.uuid = ta.task_uuid
+				LEFT OUTER JOIN allowance a ON ta.allowance_uuid = a.uuid
+			WHERE tsk.slug = ?`
+	var record TaskRecord
+	if err := s.db.SelectRecord(qry, &record, slug); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("no task record found for slug %s", slug)
+		}
+		return nil, fmt.Errorf("failed to retrieve task (slug %s) record: %v", slug, err)
+	}
+
+	// decrypt the username and allowance slug
+	var (
+		wg      sync.WaitGroup
+		errChan = make(chan error, 2)
+
+		username      string
+		allowanceSlug string
+	)
+
+	wg.Add(1)
+	go func(encrypted string, decrypted *string, ch chan error, wg *sync.WaitGroup) {
+		defer wg.Done()
+
+		// decrypt the username
+		d, err := s.cryptor.DecryptServiceData(encrypted)
+		if err != nil {
+			errChan <- fmt.Errorf("failed to decrypt username for task (slug %s): %v", slug, err)
+			return
+		}
+		*decrypted = string(d)
+	}(record.Username, &username, errChan, &wg)
+
+	wg.Add(1)
+	go func(encrypted string, decrypted *string, ch chan error, wg *sync.WaitGroup) {
+		defer wg.Done()
+
+		// decrypt the allowance slug
+		d, err := s.cryptor.DecryptServiceData(encrypted)
+		if err != nil {
+			errChan <- fmt.Errorf("failed to decrypt allowance slug for task (slug %s): %v", slug, err)
+			return
+		}
+		*decrypted = string(d)
+	}(record.AllowanceSlug, &allowanceSlug, errChan, &wg)
+
+	wg.Wait()
+	close(errChan)
+	// check for errors in the goroutines
+	if len(errChan) > 0 {
+		errs := make([]string, len(errChan))
+		for e := range errChan {
+			errs = append(errs, e.Error())
+		}
+		return nil, fmt.Errorf("failed to decrypt db values: %v", strings.Join(errs, "; "))
+	}
+
+	// update the task record with the decrypted username and allowance slug
+	record.Username = username
+	record.AllowanceSlug = allowanceSlug
+
+	// return the task record
+	return &record, nil
 }
 
 // CreateTask is a concrete implementation of the CreateTask method in the TaskService interface
@@ -151,18 +299,21 @@ func (s *taskService) CreateTask() (*Task, error) {
 
 	// create the task record
 	task := Task{
-		Id:             id.String(),
-		CreatedAt:      data.CustomTime{Time: time.Now().UTC()},
-		IsComplete:     false,
-		IsSatisfactory: true, // i want it to default to this so you dont have to approve every single one.
-		IsProactive:    true, // i want it to default to this so you dont have to approve every single one.
+		Id:         id.String(),
+		CreatedAt:  data.CustomTime{Time: time.Now().UTC()},
+		IsComplete: false,
+		CompletedAt: sql.NullTime{
+			Valid: false, // indicates NULL
+		},
+		IsSatisfactory: true, // default to this so you dont have to approve every single one.
+		IsProactive:    true, // default to this so you dont have to approve every single one.
 		Slug:           slug.String(),
 		IsArchived:     false,
 	}
 
 	// insert the task record into the database
-	qry := `INSERT INTO task (uuid, created_at, is_complete, is_satisfactory, is_proactive, slug, is_archived)
-			VALUES (?, ?, ?, ?, ?, ?, ?)`
+	qry := `INSERT INTO task (uuid, created_at, is_complete, completed_at, is_satisfactory, is_proactive, slug, is_archived)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 	if err := s.db.InsertRecord(qry, task); err != nil {
 		errMsg := fmt.Sprintf("failed to insert task record: %v", err)
 		s.logger.Error(errMsg)
@@ -198,6 +349,22 @@ func (s *taskService) CreateAllowanceXref(t *Task, a *tasks.Allowance) (*TaskAll
 	return &xref, nil
 }
 
+// UpdateTask is a concrete implementation of the UpdateTask method in the TaskService interface
+func (s *taskService) UpdateTask(t Task) error {
+
+	// update the task record in the database
+	// these are the only field that may be updated. The rest are immutable
+	qry := `UPDATE task
+			SET is_complete = ?, completed_at = ?, is_satisfactory = ?, is_proactive = ?, is_archived = ?
+			WHERE uuid = ?`
+	if err := s.db.UpdateRecord(qry, t.IsComplete, t.CompletedAt, t.IsSatisfactory, t.IsProactive, t.IsArchived, t.Id); err != nil {
+		errMsg := fmt.Sprintf("failed to update task record: %v", err)
+		return fmt.Errorf(errMsg)
+	}
+
+	return nil
+}
+
 // buildTaskQuery is a function that builds a SQL query string based on the provided parameters and permissions
 // It returns the query string and any error encountered during the process
 // username is needed if permissions dont allow getting all tasks: it will filter for just that user's tasks
@@ -220,6 +387,7 @@ func (s *taskService) buildTaskQuery(username string, params url.Values, permiss
 				tmp.category,
 				tsk.created_at,
 				tsk.is_complete,
+				COALESCE(tsk.completed_at, '') AS completed_at,
 				tsk.is_satisfactory,
 				tsk.is_proactive,
 				tsk.slug AS task_slug,
@@ -278,7 +446,7 @@ func (s *taskService) buildTaskQuery(username string, params url.Values, permiss
 			// Note: many daily tasks will end up incomplete, so is_completed = false AND cadence <> 'DAILY'
 			whereClauses = append(whereClauses,
 				`((tsk.created_at >= ? AND tsk.created_at <= ? AND tmp.cadence = 'DAILY') 
-				OR (tsk.is_completed = FALSE AND tmp.cadence <> 'DAILY') 
+				OR (tsk.is_complete = FALSE AND tmp.cadence <> 'DAILY') 
 				OR (tsk.completed_at >= ? AND tsk.completed_at <= ?))`)
 			args = append(args, todayStart.Format("2006-01-02 15:04:05"))
 			args = append(args, tomorrowStart.Format("2006-01-02 15:04:05"))
@@ -305,6 +473,7 @@ func (s *taskService) buildTaskQuery(username string, params url.Values, permiss
 
 			// all is default behavior, so only need to handle adding sql syntax if me or/and other user slugs are present
 			// including 'all' in a list greater than 1 will cause a validation error, so no need to check for that
+
 			assigneeClauses := []string{}
 			for _, a := range assigneeList {
 
@@ -318,7 +487,9 @@ func (s *taskService) buildTaskQuery(username string, params url.Values, permiss
 					assigneeClauses = append(assigneeClauses, "a.user_index = ?")
 					args = append(args, index)
 
-				} else {
+				}
+
+				if a != "me" && a != "all" {
 					// get the allowance index from the slug
 					index, err := s.indexer.ObtainBlindIndex(a)
 					if err != nil {
@@ -330,8 +501,10 @@ func (s *taskService) buildTaskQuery(username string, params url.Values, permiss
 				}
 			}
 			// join the user filtering clauses with OR and add to the where clauses
-			assigneeSql := strings.Join(assigneeClauses, " OR ")
-			whereClauses = append(whereClauses, fmt.Sprintf("(%s)", assigneeSql))
+			if len(assigneeClauses) > 0 {
+				assigneeSql := strings.Join(assigneeClauses, " OR ")
+				whereClauses = append(whereClauses, fmt.Sprintf("(%s)", assigneeSql))
+			}
 		}
 	}
 
@@ -427,7 +600,7 @@ func (s *taskService) buildTaskQuery(username string, params url.Values, permiss
 		if strings.ToUpper(isCompleteList[0]) == "TRUE" {
 			isCompleteClause = "tsk.is_complete = TRUE"
 		}
-		if strings.ToLower(isCompleteList[0]) == "FALSE" {
+		if strings.ToUpper(isCompleteList[0]) == "FALSE" {
 			isCompleteClause = "tsk.is_complete = FALSE"
 		}
 
@@ -457,7 +630,7 @@ func (s *taskService) buildTaskQuery(username string, params url.Values, permiss
 		if strings.ToUpper(isSatisfactoryList[0]) == "TRUE" {
 			isSatisfactoryClause = "tsk.is_satisfactory = TRUE"
 		}
-		if strings.ToLower(isSatisfactoryList[0]) == "FALSE" {
+		if strings.ToUpper(isSatisfactoryList[0]) == "FALSE" {
 			isSatisfactoryClause = "tsk.is_satisfactory = FALSE"
 		}
 
@@ -487,7 +660,7 @@ func (s *taskService) buildTaskQuery(username string, params url.Values, permiss
 		if strings.ToUpper(isProactiveList[0]) == "TRUE" {
 			isProactiveClause = "tsk.is_proactive = TRUE"
 		}
-		if strings.ToLower(isProactiveList[0]) == "FALSE" {
+		if strings.ToUpper(isProactiveList[0]) == "FALSE" {
 			isProactiveClause = "tsk.is_proactive = FALSE"
 		}
 
@@ -517,7 +690,7 @@ func (s *taskService) buildTaskQuery(username string, params url.Values, permiss
 		if strings.ToUpper(isArchivedList[0]) == "TRUE" {
 			isArchivedClause = "tsk.is_archived = TRUE"
 		}
-		if strings.ToLower(isArchivedList[0]) == "FALSE" {
+		if strings.ToUpper(isArchivedList[0]) == "FALSE" {
 			isArchivedClause = "tsk.is_archived = FALSE"
 		}
 
