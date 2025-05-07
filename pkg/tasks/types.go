@@ -11,6 +11,7 @@ import (
 type Service interface {
 	TaskService
 	TaskErrorService
+	ScheduledService
 }
 
 // NewService creates a new Service interface, returning a pointer to the concrete implementation
@@ -18,6 +19,7 @@ func NewService(sql data.SqlRepository, i data.Indexer, c data.Cryptor) Service 
 	return &service{
 		TaskService:      NewTaskService(sql, i, c),
 		TaskErrorService: NewTaskErrorService(),
+		ScheduledService: NewScheduledService(sql),
 	}
 }
 
@@ -27,6 +29,7 @@ var _ Service = (*service)(nil)
 type service struct {
 	TaskService
 	TaskErrorService
+	ScheduledService
 }
 
 // Task is a struct that represents a task record in the database
@@ -44,7 +47,7 @@ type Task struct {
 // TaskAllowanceXref is a model that represents a many-to-many relationship
 // between tasks and allowances in the db
 type TaskAllowanceXref struct {
-	// Id          int             `db:"id" json:"id,omitempty"`
+	Id          int             `db:"id" json:"id,omitempty"`
 	TaskId      string          `db:"task_uuid" json:"task_uuid,omitempty"`
 	AllowanceId string          `db:"allowance_uuid" json:"allowance_uuid,omitempty"`
 	CreatedAt   data.CustomTime `db:"created_at" json:"created_at,omitempty"`
@@ -67,4 +70,21 @@ type TaskRecord struct {
 	IsArchived     bool            `json:"is_archived" db:"is_archived"`             // Task record field
 	Username       string          `json:"username" db:"username"`                   // Allowance record field
 	AllowanceSlug  string          `json:"allowance_slug" db:"allowance_slug"`       // Allowance record slug
+}
+
+// DailyGen is a model for a join representing the data needed to create a task
+// with all of it's xref data and check if the tasks already exists
+// NOTE: it is for creating tasks so most of it's fields are from the task template,
+// allowance, and xref tables
+type DailyGen struct {
+	TemplateId  string `db:"template_uuid"`  // Template record uuid
+	AllowanceId string `db:"allowance_uuid"` // Allowance record uuid
+}
+
+// TemplateTaskXref is a model that represents a many-to-many relationship
+type TemplateTaskXref struct {
+	Id         int             `db:"id"`
+	TemplateId string          `db:"template_uuid"`
+	TaskId     string          `db:"task_uuid"`
+	CreatedAt  data.CustomTime `db:"created_at"`
 }

@@ -220,7 +220,11 @@ func (m *manager) Run() error {
 		}
 	}()
 
+	// cleanup expired s2s tokens
 	m.cleanup.ExpiredS2s()
+
+	// generate daily tasks
+	m.task.CreateDailyTasks()
 
 	return nil
 }
