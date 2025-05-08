@@ -458,8 +458,6 @@ func (h *handler) handlePostTasks(w http.ResponseWriter, r *http.Request) {
 		task.IsProactive = record.IsProactive // for return value
 	}
 
-	fmt.Printf("RECORD: %+v\n", record)
-
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(task); err != nil {

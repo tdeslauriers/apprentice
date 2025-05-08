@@ -58,10 +58,10 @@ func (s *scheduledService) CreateDailyTasks() {
 	go func() {
 		for {
 
-			now := time.Now()
+			now := time.Now().UTC()
 
-			// calc next 3am
-			next := time.Date(now.Year(), now.Month(), now.Day(), 3, 0, 0, 0, now.Location())
+			// calc next 3am (local time) -> which is 9AM UTC
+			next := time.Date(now.Year(), now.Month(), now.Day(), 9, 0, 0, 0, time.UTC)
 			// if 3am has already passed, add a day
 			if next.Before(now) {
 				next = next.Add(24 * time.Hour)
@@ -77,17 +77,18 @@ func (s *scheduledService) CreateDailyTasks() {
 			timer := time.NewTimer(duration)
 			<-timer.C
 
-			// check if tasks already created
+			// check if tasks already created by another instance of the service
 			// just need to check for one record because if one Daily task exists for the day, they all do
 			qry := `SELECT EXISTS
 						(SELECT 1 
-						FROM tasks t
-							LEFT OUTER JOIN task_template tt ON t.task_template_uuid = tt.uuid
-						WHERE tt.cadence = 'DAILY'
-							AND t.created_at >= CURRENT_TIME() - INTERVAL 2 HOUR`
+						FROM task t
+							LEFT OUTER JOIN template_task tt ON t.uuid = tt.task_uuid
+							LEFT OUTER JOIN template tem ON tt.template_uuid = tem.uuid
+						WHERE tem.cadence = 'DAILY'
+							AND t.created_at >= UTC_TIMESTAMP() - INTERVAL 2 HOUR)`
 			ok, err := s.db.SelectExists(qry)
 			if ok {
-				s.logger.Info("tasks already created for today, skipping")
+				s.logger.Info("daily tasks already created for today, skipping task generation")
 				return
 			}
 			if err != nil {
@@ -146,6 +147,7 @@ func (s *scheduledService) CreateDailyTasks() {
 						Id:             id.String(),
 						CreatedAt:      data.CustomTime{Time: time.Now().UTC()},
 						IsComplete:     false,
+						CompletedAt:    sql.NullTime{},
 						IsSatisfactory: true,
 						IsProactive:    true,
 						Slug:           slug.String(),
@@ -153,8 +155,8 @@ func (s *scheduledService) CreateDailyTasks() {
 					}
 
 					// create the task
-					qry = `INSERT INTO task (uuid, created_at, is_complete, is_satisfactory, is_proactive, slug, is_archived) 
-							VALUES (?, ?, ?, ?, ?, ?, ?)`
+					qry = `INSERT INTO task (uuid, created_at, is_complete, completed_at, is_satisfactory, is_proactive, slug, is_archived) 
+							VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 					if err := s.db.InsertRecord(qry, task); err != nil {
 						s.logger.Error(fmt.Sprintf("failed to create daily task in database: %v", err))
 						return
@@ -168,7 +170,7 @@ func (s *scheduledService) CreateDailyTasks() {
 						CreatedAt:  data.CustomTime{Time: time.Now().UTC()},
 					}
 
-					qry = `INSERT INTO template_task_xref (id, template_uuid, task_uuid, created_at)
+					qry = `INSERT INTO template_task (id, template_uuid, task_uuid, created_at)
 							VALUES (?, ?, ?, ?)`
 					if err := s.db.InsertRecord(qry, ttXref); err != nil {
 						s.logger.Error(fmt.Sprintf("failed to create template-task xref in database for daily task generation: %v", err))
@@ -183,7 +185,7 @@ func (s *scheduledService) CreateDailyTasks() {
 						CreatedAt:   data.CustomTime{Time: time.Now().UTC()},
 					}
 
-					qry = `INSERT INTO task_allowance_xref (id, task_uuid, allowance_uuid, created_at)
+					qry = `INSERT INTO task_allowance (id, task_uuid, allowance_uuid, created_at)
 							VALUES (?, ?, ?, ?)`
 					if err := s.db.InsertRecord(qry, taXref); err != nil {
 						s.logger.Error(fmt.Sprintf("failed to create task-allowance xref in database for daily task generation: %v", err))
