@@ -4,6 +4,7 @@ import (
 	"apprentice/internal/util"
 	"apprentice/pkg/allowances"
 	"apprentice/pkg/permissions"
+	"apprentice/pkg/remittance"
 	"apprentice/pkg/tasks"
 	"apprentice/pkg/templates"
 	"crypto/tls"
@@ -141,6 +142,7 @@ func New(config *config.Config) (Manager, error) {
 		iamVerifier:      jwt.NewVerifier(config.ServiceName, iamPublicKey),
 		identity:         identity,
 		allowance:        allowances.NewService(repository, indexer, cryptor),
+		remittance:       remittance.NewService(repository, indexer, cryptor, s2sTokenProvider, identity),
 		template:         templates.NewService(repository, cryptor),
 		task:             tasks.NewService(repository, indexer, cryptor),
 		permissions:      permissions.NewService(repository, indexer),
@@ -165,6 +167,7 @@ type manager struct {
 	iamVerifier      jwt.Verifier
 	identity         connect.S2sCaller
 	allowance        allowances.Service
+	remittance       remittance.Service
 	template         templates.Service
 	task             tasks.Service
 	permissions      permissions.Service
@@ -183,7 +186,7 @@ func (m *manager) CloseDb() error {
 func (m *manager) Run() error {
 
 	// allowances
-	allowance := allowances.NewHandler(m.allowance, m.s2sVerifier, m.iamVerifier, m.s2sTokenProvider, m.identity)
+	allowance := allowances.NewHandler(m.allowance, m.permissions, m.s2sVerifier, m.iamVerifier, m.s2sTokenProvider, m.identity)
 
 	// templates
 	template := templates.NewHandler(m.template, m.allowance, m.task, m.s2sVerifier, m.iamVerifier, m.s2sTokenProvider, m.identity)
@@ -225,6 +228,9 @@ func (m *manager) Run() error {
 
 	// generate daily tasks
 	m.task.CreateDailyTasks()
+
+	// conduct remittance disbursement
+	m.remittance.Disburse()
 
 	return nil
 }

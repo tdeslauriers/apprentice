@@ -2,6 +2,7 @@ package allowances
 
 import (
 	"apprentice/internal/util"
+	"apprentice/pkg/permissions"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -12,6 +13,7 @@ import (
 	"github.com/tdeslauriers/carapace/pkg/connect"
 	"github.com/tdeslauriers/carapace/pkg/data"
 	"github.com/tdeslauriers/carapace/pkg/jwt"
+	exo "github.com/tdeslauriers/carapace/pkg/permissions"
 	"github.com/tdeslauriers/carapace/pkg/profile"
 	"github.com/tdeslauriers/carapace/pkg/session/provider"
 	"github.com/tdeslauriers/carapace/pkg/tasks"
@@ -30,13 +32,14 @@ type AllowancesHandler interface {
 }
 
 // NewAllowancesHandler creates a new AllowancesHandler interface, returning a pointer to the concrete implementation
-func NewAllowancesHandler(s Service, s2s, iam jwt.Verifier, tkn provider.S2sTokenProvider, identity connect.S2sCaller) AllowancesHandler {
+func NewAllowancesHandler(s Service, p permissions.Service, s2s, iam jwt.Verifier, tkn provider.S2sTokenProvider, identity connect.S2sCaller) AllowancesHandler {
 	return &allowancesHandler{
-		service:  s,
-		s2s:      s2s,
-		iam:      iam,
-		tkn:      tkn,
-		identity: identity,
+		service:    s,
+		permission: p,
+		s2s:        s2s,
+		iam:        iam,
+		tkn:        tkn,
+		identity:   identity,
 
 		logger: slog.Default().
 			With(slog.String(util.ServiceKey, util.ServiceApprentice)).
@@ -49,11 +52,12 @@ var _ AllowancesHandler = (*allowancesHandler)(nil)
 
 // allowancesHandler is the concrete implementation of the AllowancesHandler interface
 type allowancesHandler struct {
-	service  Service
-	s2s      jwt.Verifier
-	iam      jwt.Verifier
-	tkn      provider.S2sTokenProvider
-	identity connect.S2sCaller
+	service    Service
+	permission permissions.Service
+	s2s        jwt.Verifier
+	iam        jwt.Verifier
+	tkn        provider.S2sTokenProvider
+	identity   connect.S2sCaller
 
 	logger *slog.Logger
 }
@@ -112,9 +116,34 @@ func (h *allowancesHandler) handleGetAll(w http.ResponseWriter, r *http.Request)
 
 	// validate iam token
 	accessToken := r.Header.Get("Authorization")
-	if _, err := h.iam.BuildAuthorized(getAllowancesAllowed, accessToken); err != nil {
+	jot, err := h.iam.BuildAuthorized(getAllowancesAllowed, accessToken)
+	if err != nil {
 		h.logger.Error(fmt.Sprintf("/allowances handler failed to authorize iam token: %s", err.Error()))
 		connect.RespondAuthFailure(connect.User, err, w)
+		return
+	}
+
+	// get permissions
+	pm, _, err := h.permission.GetPermissions(jot.Claims.Subject)
+	if err != nil {
+		h.logger.Error(fmt.Sprintf("/allowances handler failed to get permissions: %s", err.Error()))
+		e := connect.ErrorHttp{
+			StatusCode: http.StatusInternalServerError,
+			Message:    "failed to get permissions",
+		}
+		e.SendJsonErr(w)
+		return
+	}
+
+	// check permissions
+	if _, ok := pm["payroll"]; !ok {
+		errMsg := fmt.Sprintf("%s to view /allowances", exo.UserForbidden)
+		h.logger.Error(errMsg)
+		e := connect.ErrorHttp{
+			StatusCode: http.StatusForbidden,
+			Message:    errMsg,
+		}
+		e.SendJsonErr(w)
 		return
 	}
 
@@ -151,9 +180,37 @@ func (h *allowancesHandler) handleGetAllownace(w http.ResponseWriter, r *http.Re
 
 	// validate iam token
 	accessToken := r.Header.Get("Authorization")
-	if _, err := h.iam.BuildAuthorized(getAllowancesAllowed, accessToken); err != nil {
+	jot, err := h.iam.BuildAuthorized(getAllowancesAllowed, accessToken)
+	if err != nil {
 		h.logger.Error(fmt.Sprintf("/allowance handler failed to authorize iam token: %s", err.Error()))
 		connect.RespondAuthFailure(connect.User, err, w)
+		return
+	}
+
+	// get permissions
+	pm, _, err := h.permission.GetPermissions(jot.Claims.Subject)
+	if err != nil {
+		h.logger.Error(fmt.Sprintf("/allowances handler failed to get permissions: %s", err.Error()))
+		e := connect.ErrorHttp{
+			StatusCode: http.StatusInternalServerError,
+			Message:    "failed to get permissions",
+		}
+		e.SendJsonErr(w)
+		return
+	}
+
+	// quick check permissions
+	_, isPayroll := pm["payroll"]
+	_, isRemittee := pm["remittee"]
+
+	if !isPayroll && !isRemittee {
+		errMsg := fmt.Sprintf("%s to view /allowances/{slug}", exo.UserForbidden)
+		h.logger.Error(errMsg)
+		e := connect.ErrorHttp{
+			StatusCode: http.StatusForbidden,
+			Message:    errMsg,
+		}
+		e.SendJsonErr(w)
 		return
 	}
 
@@ -175,6 +232,20 @@ func (h *allowancesHandler) handleGetAllownace(w http.ResponseWriter, r *http.Re
 		h.logger.Error(fmt.Sprintf("/allowances get-handler failed to get allowance: %s", err.Error()))
 		h.service.HandleAllowanceError(w, err)
 		return
+	}
+
+	// must either be payroll or own the allowance account to view it.
+	if !isPayroll && jot.Claims.Subject != allowance.Username {
+		if !isRemittee {
+			errMsg := fmt.Sprintf("%s to view /allowances/%s", exo.UserForbidden, slug)
+			h.logger.Error(errMsg)
+			e := connect.ErrorHttp{
+				StatusCode: http.StatusForbidden,
+				Message:    errMsg,
+			}
+			e.SendJsonErr(w)
+			return
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")

@@ -1,6 +1,7 @@
 package allowances
 
 import (
+	"apprentice/pkg/permissions"
 	"fmt"
 
 	"github.com/tdeslauriers/carapace/pkg/connect"
@@ -19,9 +20,9 @@ const (
 	ErrAllowanceNotFound = "allowance account not found"
 
 	// 422
-	ErrInvalidUsername           = "invalid username"
-	ErrInvalidAllowanceSlug      = "invalid allowance slug"
-	
+	ErrInvalidUsername      = "invalid username"
+	ErrInvalidAllowanceSlug = "invalid allowance slug"
+
 	// 500
 	ErrGenIndex = "failed to obtain/generate blind index"
 )
@@ -32,9 +33,9 @@ type Handler interface {
 }
 
 // NewHandler creates a new Handler interface, returning a pointe(s) to the concrete implementation(s)
-func NewHandler(s Service, s2s, iam jwt.Verifier, tkn provider.S2sTokenProvider, identity connect.S2sCaller) Handler {
+func NewHandler(s Service, p permissions.Service, s2s, iam jwt.Verifier, tkn provider.S2sTokenProvider, identity connect.S2sCaller) Handler {
 	return &handler{
-		AllowancesHandler: NewAllowancesHandler(s, s2s, iam, tkn, identity),
+		AllowancesHandler: NewAllowancesHandler(s, p, s2s, iam, tkn, identity),
 	}
 }
 

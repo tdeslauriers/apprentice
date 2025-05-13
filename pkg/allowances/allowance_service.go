@@ -602,7 +602,7 @@ func (s *allowanceService) prepareAllowance(r AllowanceRecord) (*tasks.Allowance
 			ch <- fmt.Errorf("failed to decrypt balance for allowance account %s: %v", r.Id, err)
 		}
 
-		// convert decrypted balance to float64
+		// convert decrypted balance 
 		bal := binary.LittleEndian.Uint64(dec)
 
 		*b = bal
