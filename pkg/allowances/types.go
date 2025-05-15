@@ -30,12 +30,14 @@ const (
 // Handler is an aggregate interface for all allowances handler functionality
 type Handler interface {
 	AllowancesHandler
+	AccountHandler
 }
 
 // NewHandler creates a new Handler interface, returning a pointe(s) to the concrete implementation(s)
 func NewHandler(s Service, p permissions.Service, s2s, iam jwt.Verifier, tkn provider.S2sTokenProvider, identity connect.S2sCaller) Handler {
 	return &handler{
 		AllowancesHandler: NewAllowancesHandler(s, p, s2s, iam, tkn, identity),
+		AccountHandler:    NewAccountHandler(s, p, s2s, iam),
 	}
 }
 
@@ -44,6 +46,7 @@ var _ Handler = (*handler)(nil)
 // handler is the concrete implementation of the Handler interface
 type handler struct {
 	AllowancesHandler
+	AccountHandler
 }
 
 // Service is an aggregate interface for all allowances service functionality

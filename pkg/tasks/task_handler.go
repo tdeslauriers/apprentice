@@ -76,10 +76,10 @@ func (h *handler) HandleTasks(w http.ResponseWriter, r *http.Request) {
 		h.handlePostTasks(w, r)
 		return
 	default:
-		h.logger.Error("only GET method is allowed to /tasks")
+		h.logger.Error("only GET and POST method is allowed to /tasks")
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusMethodNotAllowed,
-			Message:    "only GET method is allowed to /tasks",
+			Message:    "only GET and POST method is allowed to /tasks",
 		}
 		e.SendJsonErr(w)
 		return
@@ -144,7 +144,7 @@ func (h *handler) handleGetTasks(w http.ResponseWriter, r *http.Request) {
 			h.logger.Error(fmt.Sprintf("user %s does not have permission to get assignees=%s", jot.Claims.Subject, params.Get("assignee")))
 			e := connect.ErrorHttp{
 				StatusCode: http.StatusForbidden,
-				Message:    "user does not have permission to get requested assignees",
+				Message:    fmt.Sprintf("%s to get assignees=%s: %s", exoPermissions.UserForbidden, params.Get("assignee"), jot.Claims.Subject),
 			}
 			e.SendJsonErr(w)
 			return

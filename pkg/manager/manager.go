@@ -198,6 +198,7 @@ func (m *manager) Run() error {
 	mux.HandleFunc("/health", diagnostics.HealthCheckHandler)
 
 	// allowances
+	mux.HandleFunc("/allowance", allowance.HandleAccount)
 	mux.HandleFunc("/allowances", allowance.HandleAllowances)
 	mux.HandleFunc("/allowances/", allowance.HandleAllowance)
 

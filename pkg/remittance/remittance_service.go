@@ -100,9 +100,13 @@ func (s *service) Disburse() {
 					FROM allowance a
 						LEFT OUTER JOIN task_allowance ta ON a.uuid = ta.allowance_uuid
 						LEFT OUTER JOIN task t ON ta.task_uuid = t.uuid
+						LEFT OUTER JOIN template_task tt ON t.uuid = tt.task_uuid
+						LEFT OUTER JOIN template tem ON tt.template_uuid = tem.uuid
 					WHERE a.updated_at < NOW() - INTERVAL 2 HOUR
 						AND a.is_active = TRUE
 						AND a.is_calculated = TRUE
+						AND tem.is_calculated = TRUE
+						AND tem.is_archived = FALSE
 						AND a.is_archived = FALSE
 						AND t.created_at > NOW() - INTERVAL 7 DAY + INTERVAL 3 HOUR` // accounts for task creation jitter
 			var records []RemittanceTask
