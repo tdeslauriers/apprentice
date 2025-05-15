@@ -330,16 +330,17 @@ func (s *taskService) CreateAllowanceXref(t *Task, a *tasks.Allowance) (*TaskAll
 
 	// create the new xref record
 	xref := TaskAllowanceXref{
+		Id:          0,
 		TaskId:      t.Id,
 		AllowanceId: a.Id,
 		CreatedAt:   data.CustomTime{Time: time.Now().UTC()},
 	}
 
 	// insert the xref record into the database
-	qry := `INSERT INTO task_allowance (task_uuid, allowance_uuid, created_at)
-			VALUES (?, ?, ?)`
+	qry := `INSERT INTO task_allowance (id, task_uuid, allowance_uuid, created_at)
+			VALUES (?, ?, ?, ?)`
 	if err := s.db.InsertRecord(qry, xref); err != nil {
-		errMsg := fmt.Sprintf("failed to insert task-allowance xref record: %v", err)
+		errMsg := fmt.Sprintf("failed to insert task_allowance xref record: %v", err)
 		s.logger.Error(errMsg)
 		return nil, fmt.Errorf(errMsg)
 	}
