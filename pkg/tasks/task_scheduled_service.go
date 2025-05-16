@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/tdeslauriers/carapace/pkg/data"
+	"github.com/tdeslauriers/carapace/pkg/tasks"
 )
 
 // responsible for scheduled actions on task records
@@ -17,8 +19,11 @@ import (
 // marking tasks as archived, etc.
 type ScheduledService interface {
 
-	// Daily is a method to created daily tasks
+	// CreateDailyTasks is a method to created daily tasks
 	CreateDailyTasks()
+
+	// CreateWeeklyTasks is a method to create weekly tasks
+	CreateWeeklyTasks()
 }
 
 // NewScheduledService creates a new ScheduledService interface, returning a pointer to the concrete implementation
@@ -72,128 +77,188 @@ func (s *scheduledService) CreateDailyTasks() {
 			next = next.Add(randInterval)
 
 			duration := time.Until(next)
-			s.logger.Info(fmt.Sprintf("next scheduled task creation at %s", next.Format(time.RFC3339)))
+			s.logger.Info(fmt.Sprintf("next scheduled daily task creation at %s", next.Format(time.RFC3339)))
 
 			timer := time.NewTimer(duration)
 			<-timer.C
 
-			// check if tasks already created by another instance of the service
-			// just need to check for one record because if one Daily task exists for the day, they all do
-			qry := `SELECT EXISTS
+			// generate daily tasks: includes check if tasks already created by another instance of the service
+			if err := s.generateScheduledTasks(tasks.Daily); err != nil {
+				s.logger.Error(fmt.Sprintf("failed to generate daily tasks: %v", err))
+				continue
+			}
+
+			s.logger.Info("daily task generation complete")
+		}
+	}()
+}
+
+// CreateWeeklyTasks is the concrete implementation of the CreateWeeklyTasks method in the ScheduledService interface
+func (s *scheduledService) CreateWeeklyTasks() {
+
+	// will need jitter so that the services do not all run at the same time or disburse on top of each other
+	src := rand.NewSource(time.Now().UnixNano())
+	rng := rand.New(src)
+
+	go func() {
+		for {
+
+			// schedule weekly tasks for Saturday at 8 AM UTC --> 2 AM CST
+			now := time.Now().UTC()
+
+			// start with today at 8 AM UTC --> 2 AM CST
+			next := time.Date(now.Year(), now.Month(), now.Day(), 8, 0, 0, 0, time.UTC)
+
+			// calculate days until next Saturday
+			daysUntilSaturday := (6 - int(now.Weekday()) + 7) % 7
+			if daysUntilSaturday == 0 && now.After(next) {
+				daysUntilSaturday = 7
+			}
+
+			next = next.AddDate(0, 0, daysUntilSaturday)
+
+			// add jitter to the next time: +- 30 minutes to account for multiple services
+			// this is not a security concern, just to avoid all services running at the same time
+			randInterval := time.Duration(rng.Intn(60)-30) * time.Minute
+			next = next.Add(randInterval)
+
+			s.logger.Info(fmt.Sprintf("next scheduled weekly tasks creation at %s", next.Format(time.RFC3339)))
+
+			duration := time.Until(next)
+			timer := time.NewTimer(duration)
+			<-timer.C
+
+			// generate weekly tasks: includes check if tasks already created by another instance of the service
+			if err := s.generateScheduledTasks(tasks.Weekly); err != nil {
+				s.logger.Error(fmt.Sprintf("failed to generate weekly tasks: %v", err))
+				continue
+			}
+
+			s.logger.Info("weekly task generation complete")
+		}
+	}()
+}
+
+// generateScheduledTasks is a helper method to generate scheduled tasks.
+// It takes a cadence and inserts it into sql statements and preforms the task generation.
+func (s *scheduledService) generateScheduledTasks(cadence tasks.Cadence) error {
+
+	// check if tasks already created by another instance of the service
+	qry := `SELECT EXISTS
 						(SELECT 1 
 						FROM task t
 							LEFT OUTER JOIN template_task tt ON t.uuid = tt.task_uuid
 							LEFT OUTER JOIN template tem ON tt.template_uuid = tem.uuid
-						WHERE tem.cadence = 'DAILY'
-							AND t.created_at >= UTC_TIMESTAMP() - INTERVAL 2 HOUR)`
-			ok, err := s.db.SelectExists(qry)
-			if ok {
-				s.logger.Info("daily tasks already created for today, skipping task generation")
-				continue
-			}
-			if err != nil {
-				s.logger.Error(fmt.Sprintf("error checking for existing daily tasks: %v", err))
-				continue
-			}
+						WHERE tem.cadence = ?
+							AND t.created_at >= UTC_TIMESTAMP() - INTERVAL 2 HOUR)` // using 2 hours to account for task creation jitter
+	ok, err := s.db.SelectExists(qry, string(cadence))
+	if ok {
+		s.logger.Info(fmt.Sprintf("%s tasks already created, skipping task generation", strings.ToLower(string(cadence))))
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("error selecting for existing %s tasks: %v", strings.ToLower(string(cadence)), err)
+	}
 
-			// get the daily tasks for creation
-			qry = `SELECT 
-					t.uuid AS template_uuid,
-					ta.allowance_uuid AS allowance_uuid
-				FROM template t
-					LEFT OUTER JOIN template_allowance ta ON t.uuid = ta.template_uuid
-				WHERE t.cadence = 'DAILY'
-					AND t.is_archived = false`
-			var daily []DailyGen
-			if err := s.db.SelectRecords(qry, &daily); err != nil {
-				if err == sql.ErrNoRows {
-					s.logger.Warn("no daily tasks/templates found for creation in db")
-					continue
-				} else {
-					s.logger.Error(fmt.Sprintf("failed to query daily tasks for creation: %v", err))
-					continue
-				}
-			}
+	// get the tasks for creation based on cadence
+	qry = `
+		SELECT 
+			t.uuid AS template_uuid,
+			ta.allowance_uuid AS allowance_uuid
+		FROM template t
+			LEFT OUTER JOIN template_allowance ta ON t.uuid = ta.template_uuid
+		WHERE t.cadence = ?
+			AND t.is_archived = false`
+	var toGenerate []TaskGeneration
+	if err := s.db.SelectRecords(qry, &toGenerate, string(cadence)); err != nil {
+		if err == sql.ErrNoRows {
+			s.logger.Warn("no weekly tasks/templates found for creation in db")
+			return nil
+		} else {
+			return fmt.Errorf("failed to query %s tasks for creation: %v", strings.ToLower(string(cadence)), err)
 
-			// caputre unique template uuids
-			// key is the template uuid so unique, and then the value is a slice of allowance uuids
-			// for templates that need a new task for each allowance/assignee
-			gen := make(map[string][]string, len(daily))
-			for _, d := range daily {
-				if _, ok := gen[d.TemplateId]; !ok {
-					gen[d.TemplateId] = make([]string, 0)
-				}
-				gen[d.TemplateId] = append(gen[d.TemplateId], d.AllowanceId)
-			}
-
-			// create the tasks
-			for templateId, allowances := range gen {
-				for _, allowanceId := range allowances {
-					// create the task
-					// generate a new uuid for the task
-					id, err := uuid.NewRandom()
-					if err != nil {
-						s.logger.Error(fmt.Sprintf("failed to create uuid for daily task generation: %v", err))
-						continue
-					}
-
-					// generate task slug
-					slug, err := uuid.NewRandom()
-					if err != nil {
-						s.logger.Error(fmt.Sprintf("failed to create slug for daily task generation: %v", err))
-					}
-
-					task := Task{
-						Id:             id.String(),
-						CreatedAt:      data.CustomTime{Time: time.Now().UTC()},
-						IsComplete:     false,
-						CompletedAt:    sql.NullTime{},
-						IsSatisfactory: true,
-						IsProactive:    true,
-						Slug:           slug.String(),
-						IsArchived:     false,
-					}
-
-					// create the task
-					qry = `INSERT INTO task (uuid, created_at, is_complete, completed_at, is_satisfactory, is_proactive, slug, is_archived) 
-							VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-					if err := s.db.InsertRecord(qry, task); err != nil {
-						s.logger.Error(fmt.Sprintf("failed to create daily task in database: %v", err))
-						continue
-					}
-
-					// create the template-task xref
-					ttXref := TemplateTaskXref{
-						Id:         0, // auto increment
-						TemplateId: templateId,
-						TaskId:     task.Id,
-						CreatedAt:  data.CustomTime{Time: time.Now().UTC()},
-					}
-
-					qry = `INSERT INTO template_task (id, template_uuid, task_uuid, created_at)
-							VALUES (?, ?, ?, ?)`
-					if err := s.db.InsertRecord(qry, ttXref); err != nil {
-						s.logger.Error(fmt.Sprintf("failed to create template-task xref in database for daily task generation: %v", err))
-					}
-
-					// create the task-allowance xref
-					taXref := TaskAllowanceXref{
-						Id:          0, // auto increment
-						TaskId:      task.Id,
-						AllowanceId: allowanceId,
-						CreatedAt:   data.CustomTime{Time: time.Now().UTC()},
-					}
-
-					qry = `INSERT INTO task_allowance (id, task_uuid, allowance_uuid, created_at)
-							VALUES (?, ?, ?, ?)`
-					if err := s.db.InsertRecord(qry, taXref); err != nil {
-						s.logger.Error(fmt.Sprintf("failed to create task-allowance xref in database for daily task generation: %v", err))
-					}
-
-					s.logger.Info(fmt.Sprintf("created daily task %s for template %s and allowance %s", task.Id, templateId, allowanceId))
-				}
-			}
-			s.logger.Info("daily task generation complete")
 		}
-	}()
+	}
+
+	// caputre unique template uuids
+	// key is the template uuid so unique, and then the value is a slice of allowance uuids
+	// for templates that need a new task for each allowance/assignee
+	gen := make(map[string][]string, len(toGenerate))
+	for _, w := range toGenerate {
+		if _, ok := gen[w.TemplateId]; !ok {
+			gen[w.TemplateId] = make([]string, 0)
+		}
+		gen[w.TemplateId] = append(gen[w.TemplateId], w.AllowanceId)
+	}
+
+	// create the tasks
+	for templateId, allowances := range gen {
+		for _, allowanceId := range allowances {
+			// create the task
+			// generate a new uuid for the task
+			id, err := uuid.NewRandom()
+			if err != nil {
+				return fmt.Errorf("failed to create uuid for %s task generation: %v", strings.ToLower(string(cadence)), err)
+
+			}
+
+			// generate task slug
+			slug, err := uuid.NewRandom()
+			if err != nil {
+				return fmt.Errorf("failed to create slug for %s task generation: %v", strings.ToLower(string(cadence)), err)
+			}
+
+			task := Task{
+				Id:             id.String(),
+				CreatedAt:      data.CustomTime{Time: time.Now().UTC()},
+				IsComplete:     false,
+				CompletedAt:    sql.NullTime{},
+				IsSatisfactory: true,
+				IsProactive:    true,
+				Slug:           slug.String(),
+				IsArchived:     false,
+			}
+
+			// create the task
+			qry = `INSERT INTO task (uuid, created_at, is_complete, completed_at, is_satisfactory, is_proactive, slug, is_archived) 
+							VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+			if err := s.db.InsertRecord(qry, task); err != nil {
+				return fmt.Errorf("failed to create %s task in database: %v", strings.ToLower(string(cadence)), err)
+
+			}
+
+			// create the template-task xref
+			ttXref := TemplateTaskXref{
+				Id:         0, // auto increment
+				TemplateId: templateId,
+				TaskId:     task.Id,
+				CreatedAt:  data.CustomTime{Time: time.Now().UTC()},
+			}
+
+			qry = `INSERT INTO template_task (id, template_uuid, task_uuid, created_at)
+							VALUES (?, ?, ?, ?)`
+			if err := s.db.InsertRecord(qry, ttXref); err != nil {
+				s.logger.Error(fmt.Sprintf("failed to create template-task xref in database for %s task generation: %v", strings.ToLower(string(cadence)), err))
+			}
+
+			// create the task-allowance xref
+			taXref := TaskAllowanceXref{
+				Id:          0, // auto increment
+				TaskId:      task.Id,
+				AllowanceId: allowanceId,
+				CreatedAt: data.CustomTime{
+					Time: time.Now().UTC(),
+				},
+			}
+
+			qry = `INSERT INTO task_allowance (id, task_uuid, allowance_uuid, created_at)
+							VALUES (?, ?, ?, ?)`
+			if err := s.db.InsertRecord(qry, taXref); err != nil {
+				s.logger.Error(fmt.Sprintf("failed to create task-allowance xref in database for %s task generation: %v", strings.ToLower(string(cadence)), err))
+			}
+
+			s.logger.Info(fmt.Sprintf("created %s task %s for template %s and allowance %s", strings.ToLower(string(cadence)), task.Id, templateId, allowanceId))
+		}
+	}
+	return nil
 }

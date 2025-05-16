@@ -72,11 +72,11 @@ type TaskRecord struct {
 	AllowanceSlug  string          `json:"allowance_slug" db:"allowance_slug"`       // Allowance record slug
 }
 
-// DailyGen is a model for a join representing the data needed to create a task
+// TaskGeneration is a model for a join representing the data needed to create a task
 // with all of it's xref data and check if the tasks already exists
 // NOTE: it is for creating tasks so most of it's fields are from the task template,
 // allowance, and xref tables
-type DailyGen struct {
+type TaskGeneration struct {
 	TemplateId  string `db:"template_uuid"`  // Template record uuid
 	AllowanceId string `db:"allowance_uuid"` // Allowance record uuid
 }

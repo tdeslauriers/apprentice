@@ -112,12 +112,12 @@ func (s *service) Disburse() {
 			var records []RemittanceTask
 			if err := s.sql.SelectRecords(qry, &records); err != nil {
 				s.logger.Error(fmt.Sprintf("failed to select remittance tasks from db: %v", err))
-				return
+				continue
 			}
 
 			if len(records) == 0 {
 				s.logger.Info("disbursement already completed for this week, skipping")
-				return
+				continue
 			}
 
 			// loop to map: allowance uuid is key, slice of remittance tasks is value
