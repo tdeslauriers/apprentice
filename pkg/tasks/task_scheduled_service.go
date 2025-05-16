@@ -89,10 +89,11 @@ func (s *scheduledService) CreateDailyTasks() {
 			ok, err := s.db.SelectExists(qry)
 			if ok {
 				s.logger.Info("daily tasks already created for today, skipping task generation")
+				continue
 			}
 			if err != nil {
 				s.logger.Error(fmt.Sprintf("error checking for existing daily tasks: %v", err))
-				return
+				continue
 			}
 
 			// get the daily tasks for creation
@@ -107,10 +108,10 @@ func (s *scheduledService) CreateDailyTasks() {
 			if err := s.db.SelectRecords(qry, &daily); err != nil {
 				if err == sql.ErrNoRows {
 					s.logger.Warn("no daily tasks/templates found for creation in db")
-					return
+					continue
 				} else {
 					s.logger.Error(fmt.Sprintf("failed to query daily tasks for creation: %v", err))
-					return
+					continue
 				}
 			}
 
@@ -133,7 +134,7 @@ func (s *scheduledService) CreateDailyTasks() {
 					id, err := uuid.NewRandom()
 					if err != nil {
 						s.logger.Error(fmt.Sprintf("failed to create uuid for daily task generation: %v", err))
-						return
+						continue
 					}
 
 					// generate task slug
@@ -158,7 +159,7 @@ func (s *scheduledService) CreateDailyTasks() {
 							VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 					if err := s.db.InsertRecord(qry, task); err != nil {
 						s.logger.Error(fmt.Sprintf("failed to create daily task in database: %v", err))
-						return
+						continue
 					}
 
 					// create the template-task xref
@@ -173,7 +174,6 @@ func (s *scheduledService) CreateDailyTasks() {
 							VALUES (?, ?, ?, ?)`
 					if err := s.db.InsertRecord(qry, ttXref); err != nil {
 						s.logger.Error(fmt.Sprintf("failed to create template-task xref in database for daily task generation: %v", err))
-						return
 					}
 
 					// create the task-allowance xref
@@ -188,7 +188,6 @@ func (s *scheduledService) CreateDailyTasks() {
 							VALUES (?, ?, ?, ?)`
 					if err := s.db.InsertRecord(qry, taXref); err != nil {
 						s.logger.Error(fmt.Sprintf("failed to create task-allowance xref in database for daily task generation: %v", err))
-						return
 					}
 
 					s.logger.Info(fmt.Sprintf("created daily task %s for template %s and allowance %s", task.Id, templateId, allowanceId))
