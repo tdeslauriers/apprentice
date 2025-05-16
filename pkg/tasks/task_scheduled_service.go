@@ -89,7 +89,6 @@ func (s *scheduledService) CreateDailyTasks() {
 			ok, err := s.db.SelectExists(qry)
 			if ok {
 				s.logger.Info("daily tasks already created for today, skipping task generation")
-				return
 			}
 			if err != nil {
 				s.logger.Error(fmt.Sprintf("error checking for existing daily tasks: %v", err))
