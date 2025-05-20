@@ -435,13 +435,13 @@ func (s *taskService) buildTaskQuery(username string, params url.Values, permiss
 			todayStart := time.Date(
 				now.Year(), now.Month(), now.Day(),
 				0, 0, 0, 0, time.UTC,
-			).Add(+5 * time.Hour) // adjust for UTC-6 (+5 cuz daylight savings)
+			).Add(-5 * time.Hour) // adjust for UTC-6 (+5 cuz daylight savings)
 
 			// get tomorrow start in UTC
 			tomorrowStart := time.Date(
 				now.Year(), now.Month(), now.Day(),
 				0, 0, 0, 0, time.UTC,
-			).Add(24 * time.Hour).Add(+5 * time.Hour) // adjust for UTC-6 (+5 cuz daylight savings)
+			).Add(24 * time.Hour).Add(-5 * time.Hour) // adjust for UTC-6 (+5 cuz daylight savings)
 
 			// add the where clause for tasks created today OR not complete and not daily OR completed today
 			// Note: many daily tasks will end up incomplete, so is_completed = false AND cadence <> 'DAILY'

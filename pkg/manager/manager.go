@@ -227,8 +227,9 @@ func (m *manager) Run() error {
 	// cleanup expired s2s tokens
 	m.cleanup.ExpiredS2s()
 
-	// generate daily tasks
+	// generate scheduled tasks
 	m.task.CreateDailyTasks()
+	m.task.CreateWeeklyTasks()
 
 	// conduct remittance disbursement
 	m.remittance.Disburse()
