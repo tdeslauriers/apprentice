@@ -62,11 +62,17 @@ func (s *service) Disburse() {
 	go func() {
 		for {
 
-			// schedule the next disbursement for Saturday at 8 AM UTC
-			now := time.Now().UTC()
+			// schedule weekly tasks for Saturday 12.01 AM CST
+			loc, err := time.LoadLocation("America/Chicago")
+			if err != nil {
+				s.logger.Error(fmt.Sprintf("failed to load location: %v", err))
+				continue
+			}
 
-			// start with today at 8 AM UTC --> 2 AM CST
-			next := time.Date(now.Year(), now.Month(), now.Day(), 8, 0, 0, 0, time.UTC)
+			now := time.Now().In(loc)
+
+			// set to 12.01 AM CST
+			next := time.Date(now.Year(), now.Month(), now.Day(), 0, 1, 0, 0, loc)
 
 			// calculate days until next Saturday
 			daysUntilSaturday := (6 - int(now.Weekday()) + 7) % 7
@@ -88,7 +94,7 @@ func (s *service) Disburse() {
 			<-timer.C
 
 			// get allowances and check if they were updated within
-			// the last 2 hours (because disbursement is weekly)
+			// the last 1 hour (because disbursement is weekly)
 			qry := `SELECT 
 						a.uuid AS allowance_uuid,
 						a.username,
@@ -102,15 +108,15 @@ func (s *service) Disburse() {
 						LEFT OUTER JOIN task t ON ta.task_uuid = t.uuid
 						LEFT OUTER JOIN template_task tt ON t.uuid = tt.task_uuid
 						LEFT OUTER JOIN template tem ON tt.template_uuid = tem.uuid
-					WHERE a.updated_at < NOW() - INTERVAL 2 HOUR
+					WHERE a.updated_at < ? - INTERVAL 1 HOUR
 						AND a.is_active = TRUE
 						AND a.is_calculated = TRUE
 						AND tem.is_calculated = TRUE
 						AND tem.is_archived = FALSE
 						AND a.is_archived = FALSE
-						AND t.created_at > NOW() - INTERVAL 7 DAY + INTERVAL 3 HOUR` // accounts for task creation jitter
+						AND t.created_at > ? - INTERVAL 7 DAY + INTERVAL 1 HOUR` // accounts for task creation jitter
 			var records []RemittanceTask
-			if err := s.sql.SelectRecords(qry, &records); err != nil {
+			if err := s.sql.SelectRecords(qry, &records, now.UTC(), now.UTC()); err != nil {
 				s.logger.Error(fmt.Sprintf("failed to select remittance tasks from db: %v", err))
 				continue
 			}
