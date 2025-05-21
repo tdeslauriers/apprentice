@@ -14,6 +14,11 @@ RUN go build -o main ./cmd
 # run app
 FROM ubuntu:22.04
 
+# need to install tzdata for time.LoadLocation("America/Chicago") to work for scheduled jobs
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y tzdata && \
+    rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 COPY --from=builder /app/main .
