@@ -103,12 +103,34 @@ func (h *handler) HandleGetAssignees(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// call identity service to get all users with the <r/w>:apprentice:task:* scopes
-	var assignees []profile.User
+	var users []profile.User
 	encoded := url.QueryEscape("r:apprentice:tasks:* w:apprentice:tasks:*")
-	if err := h.identity.GetServiceData(fmt.Sprintf("/s2s/users/groups?scopes=%s", encoded), identityS2sToken, "", &assignees); err != nil {
+	if err := h.identity.GetServiceData(fmt.Sprintf("/s2s/users/groups?scopes=%s", encoded), identityS2sToken, "", &users); err != nil {
 		h.logger.Error(fmt.Sprintf("/templates/assignees handler failed to get tasks service users from identity service: %v", err))
 		h.identity.RespondUpstreamError(err, w)
 		return
+	}
+
+	allowances, err := h.allowance.GetAllowances()
+	if err != nil {
+		h.logger.Error(fmt.Sprintf("/templates/assignees handler failed to get allowances: %v", err))
+		h.allowance.HandleAllowanceError(w, err)
+		return
+	}
+
+	assignees := make([]exotasks.Assignee, 0, len(users))
+	for _, user := range users {
+		for _, allowance := range allowances {
+			if user.Username == allowance.Username {
+				assignees = append(assignees, exotasks.Assignee{
+					Username:      user.Username,
+					Firstname:     user.Firstname,
+					Lastname:      user.Lastname,
+					AllowanceSlug: allowance.Slug,
+				})
+				break
+			}
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -237,7 +259,12 @@ func (h *handler) handleGetTemplates(w http.ResponseWriter, r *http.Request) {
 	for i := range templates {
 		for j := range templates[i].Assignees {
 			if user, ok := assigneeMap[templates[i].Assignees[j].Username]; ok {
-				templates[i].Assignees[j] = user
+				templates[i].Assignees[j] = exotasks.Assignee{
+					Username:      templates[i].Assignees[j].Username,
+					Firstname:     user.Firstname,
+					Lastname:      user.Lastname,
+					AllowanceSlug: templates[i].Assignees[j].AllowanceSlug,
+				}
 			} else {
 				h.logger.Error(fmt.Sprintf("/templates handler failed to hydrate assignee: %s", templates[i].Assignees[j].Username))
 				e := connect.ErrorHttp{
@@ -502,7 +529,8 @@ func (h *handler) getTemplate(w http.ResponseWriter, r *http.Request) {
 	for i := range template.Assignees {
 		for _, a := range assignees {
 			if template.Assignees[i].Username == a.Username {
-				template.Assignees[i] = a
+				template.Assignees[i].Firstname = a.Firstname
+				template.Assignees[i].Lastname = a.Lastname
 				break
 			}
 		}

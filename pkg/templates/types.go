@@ -83,16 +83,17 @@ func (t *Template) Validate() error {
 
 // TemplateAssignee is a struct that represents a template + allowance db join query row result
 type TemplateAssignee struct {
-	Id           string          `db:"uuid"`
-	Name         string          `db:"name"`
-	Description  string          `db:"description"`
-	Cadence      tasks.Cadence   `db:"cadence"`
-	Category     tasks.Category  `db:"category"`
-	IsCalculated bool            `db:"is_calculated"`
-	Slug         string          `db:"slug"`
-	CreatedAt    data.CustomTime `db:"created_at"`
-	IsArchived   bool            `db:"is_archived"`
-	Username     string          `db:"username"`
+	Id            string          `db:"uuid"`
+	Name          string          `db:"name"`
+	Description   string          `db:"description"`
+	Cadence       tasks.Cadence   `db:"cadence"`
+	Category      tasks.Category  `db:"category"`
+	IsCalculated  bool            `db:"is_calculated"`
+	TemplateSlug  string          `db:"template_slug"`
+	CreatedAt     data.CustomTime `db:"created_at"`
+	IsArchived    bool            `db:"is_archived"`
+	Username      string          `db:"username"`
+	AllowanceSlug string          `db:"allowance_slug"`
 }
 
 // AllowanceTemplateXref is a model that represents a many-to-many relationship

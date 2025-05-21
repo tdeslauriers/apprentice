@@ -429,19 +429,26 @@ func (s *taskService) buildTaskQuery(username string, params url.Values, permiss
 	if params.Has("view") && params.Get("view") != "" {
 		if params.Get("view") == "today" {
 
-			now := time.Now().UTC()
+			loc, err := time.LoadLocation("America/Chicago")
+			if err != nil {
+				return "", nil, fmt.Errorf("failed to load local location timezone: %v", err)
+			}
 
-			// get the start of today in UTC
-			todayStart := time.Date(
-				now.Year(), now.Month(), now.Day(),
-				0, 0, 0, 0, time.UTC,
-			).Add(-5 * time.Hour) // adjust for UTC-6 (+5 cuz daylight savings)
+			now := time.Now().In(loc)
 
-			// get tomorrow start in UTC
-			tomorrowStart := time.Date(
+			// interval from 12:01 AM to 11:59 PM Central time
+			startOfDayLocal := time.Date(
 				now.Year(), now.Month(), now.Day(),
-				0, 0, 0, 0, time.UTC,
-			).Add(24 * time.Hour).Add(-5 * time.Hour) // adjust for UTC-6 (+5 cuz daylight savings)
+				0, 1, 0, 0, loc, // 12:01 AM
+			)
+			endOfDayLocal := time.Date(
+				now.Year(), now.Month(), now.Day(),
+				23, 59, 0, 0, loc, // 11:59 PM
+			)
+
+			// convert to UTC for db lookup since all times in UTC in db
+			startUTC := startOfDayLocal.UTC()
+			endUTC := endOfDayLocal.UTC()
 
 			// add the where clause for tasks created today OR not complete and not daily OR completed today
 			// Note: many daily tasks will end up incomplete, so is_completed = false AND cadence <> 'DAILY'
@@ -449,10 +456,10 @@ func (s *taskService) buildTaskQuery(username string, params url.Values, permiss
 				`((tsk.created_at >= ? AND tsk.created_at <= ? AND tmp.cadence = 'DAILY') 
 				OR (tsk.is_complete = FALSE AND tmp.cadence <> 'DAILY') 
 				OR (tsk.completed_at >= ? AND tsk.completed_at <= ?))`)
-			args = append(args, todayStart.Format("2006-01-02 15:04:05"))
-			args = append(args, tomorrowStart.Format("2006-01-02 15:04:05"))
-			args = append(args, todayStart.Format("2006-01-02 15:04:05"))
-			args = append(args, tomorrowStart.Format("2006-01-02 15:04:05"))
+			args = append(args, startUTC.Format("2006-01-02 15:04:05"))
+			args = append(args, endUTC.Format("2006-01-02 15:04:05"))
+			args = append(args, startUTC.Format("2006-01-02 15:04:05"))
+			args = append(args, endUTC.Format("2006-01-02 15:04:05"))
 		}
 	}
 

@@ -63,11 +63,17 @@ func (s *scheduledService) CreateDailyTasks() {
 	go func() {
 		for {
 
-			now := time.Now().UTC()
+			loc, err := time.LoadLocation("America/Chicago")
+			if err != nil {
+				s.logger.Error(fmt.Sprintf("failed to load location: %v", err))
+				continue
+			}
 
-			// calc next 3am (local time) -> which is 9AM UTC
-			next := time.Date(now.Year(), now.Month(), now.Day(), 9, 0, 0, 0, time.UTC)
-			// if 3am has already passed, add a day
+			now := time.Now().In(loc)
+
+			// set to 1 AM CST to account for +- 30 minutes jitter
+			next := time.Date(now.Year(), now.Month(), now.Day(), 1, 0, 0, 0, loc)
+			// if 1am has already passed, add a day
 			if next.Before(now) {
 				next = next.Add(24 * time.Hour)
 			}
@@ -103,11 +109,17 @@ func (s *scheduledService) CreateWeeklyTasks() {
 	go func() {
 		for {
 
-			// schedule weekly tasks for Saturday at 8 AM UTC --> 2 AM CST
-			now := time.Now().UTC()
+			// schedule weekly tasks for Saturday 1 AM CST
+			loc, err := time.LoadLocation("America/Chicago")
+			if err != nil {
+				s.logger.Error(fmt.Sprintf("failed to load location: %v", err))
+				continue
+			}
 
-			// start with today at 8 AM UTC --> 2 AM CST
-			next := time.Date(now.Year(), now.Month(), now.Day(), 8, 0, 0, 0, time.UTC)
+			now := time.Now().In(loc)
+
+			// set to 1 AM CST to account for +- 30 minutes jitter
+			next := time.Date(now.Year(), now.Month(), now.Day(), 1, 0, 0, 0, loc)
 
 			// calculate days until next Saturday
 			daysUntilSaturday := (6 - int(now.Weekday()) + 7) % 7

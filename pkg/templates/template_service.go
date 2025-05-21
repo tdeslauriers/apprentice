@@ -12,7 +12,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/tdeslauriers/carapace/pkg/data"
-	"github.com/tdeslauriers/carapace/pkg/profile"
 	exotasks "github.com/tdeslauriers/carapace/pkg/tasks"
 	"github.com/tdeslauriers/carapace/pkg/validate"
 )
@@ -77,10 +76,11 @@ func (s *templateService) GetTemplates() ([]exotasks.Template, error) {
 			t.cadence, 
 			t.category, 
 			t.is_calculated,
-			t.slug, 
+			t.slug AS template_slug, 
 			t.created_at, 
 			t.is_archived,
-			a.username
+			a.username,
+			a.slug AS allowance_slug
 		FROM template t 
 			LEFT OUTER JOIN template_allowance ta ON t.uuid = ta.template_uuid
 			LEFT OUTER JOIN allowance a ON ta.allowance_uuid = a.uuid
@@ -94,21 +94,26 @@ func (s *templateService) GetTemplates() ([]exotasks.Template, error) {
 
 	// decrypt the allowance usernames
 	// map of usernames so dont decrypt the same username multiple times
-	uniqueUsers := make(map[string]string, len(templates))
+	uniqueEncrypted := make(map[string]*string, len(templates)*2)
+
 	for _, t := range templates {
 		// dumping into a map so can decrypt concurrently
-		uniqueUsers[t.Username] = "" // placeholder for decypted value; encrpyted value is the key
+		if _, ok := uniqueEncrypted[t.Username]; !ok {
+			uniqueEncrypted[t.Username] = new(string)
+		}
+		if _, ok := uniqueEncrypted[t.AllowanceSlug]; !ok {
+			uniqueEncrypted[t.AllowanceSlug] = new(string)
+		}
 	}
 
-	// decrypt the usernames concurrently
+	// decrypt the usernames and slugs concurrently
 	var (
-		mu sync.Mutex
-		wg sync.WaitGroup
-
-		errChan = make(chan error, len(uniqueUsers))
+		mu      sync.Mutex
+		wg      sync.WaitGroup
+		errChan = make(chan error, len(uniqueEncrypted))
 	)
 
-	for encrypted := range uniqueUsers {
+	for encrypted := range uniqueEncrypted {
 
 		wg.Add(1)
 		go func(encrypted string, ch chan error, wg *sync.WaitGroup) {
@@ -117,12 +122,11 @@ func (s *templateService) GetTemplates() ([]exotasks.Template, error) {
 			decrypted, err := s.cryptor.DecryptServiceData(encrypted)
 			if err != nil {
 				ch <- fmt.Errorf("%v", err)
-
 				return
 			}
 
 			mu.Lock()
-			uniqueUsers[encrypted] = string(decrypted)
+			*uniqueEncrypted[encrypted] = string(decrypted)
 			mu.Unlock()
 		}(encrypted, errChan, &wg)
 	}
@@ -136,7 +140,7 @@ func (s *templateService) GetTemplates() ([]exotasks.Template, error) {
 		for err := range errChan {
 			errs = append(errs, fmt.Sprintf("%v", err))
 		}
-		errMsg := fmt.Sprintf("failed to decrypt %d username(s): %v", len(errs), strings.Join(errs, "; "))
+		errMsg := fmt.Sprintf("failed to decrypt %d username(s) and/or allowance slugs: %v", len(errs), strings.Join(errs, "; "))
 		s.logger.Error(errMsg)
 		return nil, fmt.Errorf(errMsg)
 	}
@@ -152,16 +156,17 @@ func (s *templateService) GetTemplates() ([]exotasks.Template, error) {
 				Cadence:      t.Cadence,
 				Category:     t.Category,
 				IsCalculated: t.IsCalculated,
-				Slug:         t.Slug,
+				Slug:         t.TemplateSlug,
 				CreatedAt:    t.CreatedAt,
 				IsArchived:   t.IsArchived,
-				Assignees:    make([]profile.User, 0),
+				Assignees:    make([]exotasks.Assignee, 0),
 			}
 		}
 
 		template := uniqueTemplates[t.Id]
-		template.Assignees = append(template.Assignees, profile.User{
-			Username: uniqueUsers[t.Username],
+		template.Assignees = append(template.Assignees, exotasks.Assignee{
+			Username:      *uniqueEncrypted[t.Username],
+			AllowanceSlug: *uniqueEncrypted[t.AllowanceSlug],
 		})
 		uniqueTemplates[t.Id] = template
 	}
@@ -197,10 +202,11 @@ func (s *templateService) GetTemplate(slug string) (*exotasks.Template, error) {
 		t.cadence, 
 		t.category, 
 		t.is_calculated,
-		t.slug, 
+		t.slug AS template_slug, 
 		t.created_at, 
 		t.is_archived,
-		a.username
+		a.username,
+		a.slug AS allowance_slug
 	FROM template t 
 		LEFT OUTER JOIN template_allowance ta ON t.uuid = ta.template_uuid
 		LEFT OUTER JOIN allowance a ON ta.allowance_uuid = a.uuid
@@ -229,13 +235,22 @@ func (s *templateService) GetTemplate(slug string) (*exotasks.Template, error) {
 		go func(index int, ch chan error, wg *sync.WaitGroup) {
 			defer wg.Done()
 
-			decrypted, err := s.cryptor.DecryptServiceData(templates[index].Username)
+			// decrypt username
+			username, err := s.cryptor.DecryptServiceData(templates[index].Username)
 			if err != nil {
 				ch <- fmt.Errorf("%v", err)
 				return
 			}
+			templates[index].Username = string(username)
 
-			templates[index].Username = string(decrypted)
+			// decrypt allowance slug
+			slug, err := s.cryptor.DecryptServiceData(templates[index].AllowanceSlug)
+			if err != nil {
+				ch <- fmt.Errorf("%v", err)
+				return
+			}
+			templates[index].AllowanceSlug = string(slug)
+
 		}(i, errChan, &wg)
 	}
 
@@ -261,15 +276,16 @@ func (s *templateService) GetTemplate(slug string) (*exotasks.Template, error) {
 		Cadence:      templates[0].Cadence,
 		Category:     templates[0].Category,
 		IsCalculated: templates[0].IsCalculated,
-		Slug:         templates[0].Slug,
+		Slug:         templates[0].TemplateSlug,
 		CreatedAt:    templates[0].CreatedAt,
 		IsArchived:   templates[0].IsArchived,
-		Assignees:    make([]profile.User, 0),
+		Assignees:    make([]exotasks.Assignee, 0),
 	}
 	for _, t := range templates {
 
-		uniqueTemplate.Assignees = append(uniqueTemplate.Assignees, profile.User{
-			Username: t.Username,
+		uniqueTemplate.Assignees = append(uniqueTemplate.Assignees, exotasks.Assignee{
+			Username:      t.Username,
+			AllowanceSlug: t.AllowanceSlug,
 		})
 	}
 
