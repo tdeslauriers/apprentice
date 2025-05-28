@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strings"
-	"sync"
 	"time"
 
 	"github.com/tdeslauriers/carapace/pkg/connect"
@@ -194,64 +192,20 @@ func (h *accountHandler) handleUpdateAccount(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// make two calls to db concurrently:
-	// permissions and allowance account lookup
-	var (
-		wg    sync.WaitGroup
-		aCh   = make(chan *tasks.Allowance, 1)
-		pCh   = make(chan map[string]exo.Permission, 1)
-		errCh = make(chan error, 1)
-	)
-
+	// NOTE: not using concurrency here because if permissions are wrong, error immediately
+	// and not fetch and decrypt the allowance account record
 	// get permissions
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-
-		p, _, err := h.permissions.GetPermissions(authorized.Claims.Subject)
-		if err != nil {
-			errCh <- err
-			return
-		}
-		pCh <- p
-	}()
-
-	// get allowance
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-
-		a, err := h.service.GetByUser(authorized.Claims.Subject)
-		if err != nil {
-			errCh <- err
-			return
-		}
-		aCh <- a
-	}()
-
-	wg.Wait()
-	close(aCh)
-	close(pCh)
-	close(errCh)
-
-	// check for errors
-	if len(errCh) > 0 {
-		errs := make([]string, 0, len(errCh))
-		for err := range errCh {
-			errs = append(errs, err.Error())
-		}
-		errMsg := fmt.Sprintf("/account handler failed to lookup record(s): %s", strings.Join(errs, "; "))
+	pm, _, err := h.permissions.GetPermissions(authorized.Claims.Subject)
+	if err != nil {
+		errMsg := fmt.Sprintf("/account update handler failed to get permissions for %s: %s", authorized.Claims.Subject, err.Error())
 		h.logger.Error(errMsg)
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusInternalServerError,
-			Message:    errMsg,
+			Message:    "failed to get permissions",
 		}
 		e.SendJsonErr(w)
 		return
 	}
-
-	allowance := <-aCh
-	pm := <-pCh
 
 	// quick check permissions
 	_, isPayroll := pm["payroll"]
@@ -279,6 +233,15 @@ func (h *accountHandler) handleUpdateAccount(w http.ResponseWriter, r *http.Requ
 			Message:    errMsg,
 		}
 		e.SendJsonErr(w)
+		return
+	}
+
+	// get allowance
+	allowance, err := h.service.GetByUser(authorized.Claims.Subject)
+	if err != nil {
+		errMsg := fmt.Sprintf("/account update handler failed to fetch %s's account: %s", authorized.Claims.Subject, err.Error())
+		h.logger.Error(errMsg)
+		h.service.HandleAllowanceError(w, err)
 		return
 	}
 

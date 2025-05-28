@@ -116,7 +116,7 @@ func (h *allowancesHandler) handleGetAll(w http.ResponseWriter, r *http.Request)
 
 	// validate iam token
 	accessToken := r.Header.Get("Authorization")
-	jot, err := h.iam.BuildAuthorized(getAllowancesAllowed, accessToken)
+	authorized, err := h.iam.BuildAuthorized(getAllowancesAllowed, accessToken)
 	if err != nil {
 		h.logger.Error(fmt.Sprintf("/allowances handler failed to authorize iam token: %s", err.Error()))
 		connect.RespondAuthFailure(connect.User, err, w)
@@ -124,7 +124,7 @@ func (h *allowancesHandler) handleGetAll(w http.ResponseWriter, r *http.Request)
 	}
 
 	// get permissions
-	pm, _, err := h.permission.GetPermissions(jot.Claims.Subject)
+	pm, _, err := h.permission.GetPermissions(authorized.Claims.Subject)
 	if err != nil {
 		h.logger.Error(fmt.Sprintf("/allowances handler failed to get permissions: %s", err.Error()))
 		e := connect.ErrorHttp{
@@ -199,11 +199,10 @@ func (h *allowancesHandler) handleGetAllownace(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	// NOTE: not using concurrency here because if permissions are wrong, error immediately
+	// and not fetch and decrypt the allowance account record
 	// quick check permissions
-	_, isPayroll := pm["payroll"]
-	_, isRemittee := pm["remittee"]
-
-	if !isPayroll && !isRemittee {
+	if _, ok := pm["payroll"]; !ok {
 		errMsg := fmt.Sprintf("%s to view /allowances/{slug}", exo.UserForbidden)
 		h.logger.Error(errMsg)
 		e := connect.ErrorHttp{
@@ -232,20 +231,6 @@ func (h *allowancesHandler) handleGetAllownace(w http.ResponseWriter, r *http.Re
 		h.logger.Error(fmt.Sprintf("/allowances get-handler failed to get allowance: %s", err.Error()))
 		h.service.HandleAllowanceError(w, err)
 		return
-	}
-
-	// must either be payroll or own the allowance account to view it.
-	if !isPayroll && jot.Claims.Subject != allowance.Username {
-		if !isRemittee {
-			errMsg := fmt.Sprintf("%s to view /allowances/%s", exo.UserForbidden, slug)
-			h.logger.Error(errMsg)
-			e := connect.ErrorHttp{
-				StatusCode: http.StatusForbidden,
-				Message:    errMsg,
-			}
-			e.SendJsonErr(w)
-			return
-		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -277,6 +262,29 @@ func (h *allowancesHandler) handleCreate(w http.ResponseWriter, r *http.Request)
 	if err != nil {
 		h.logger.Error(fmt.Sprintf("/allowances handler failed to authorize iam token: %s", err.Error()))
 		connect.RespondAuthFailure(connect.User, err, w)
+		return
+	}
+
+	// get permissions and validate user has permission to create allowance accounts, ie, payroll permission
+	pm, _, err := h.permission.GetPermissions(authorized.Claims.Subject)
+	if err != nil {
+		h.logger.Error(fmt.Sprintf("/allowances post-handler failed to get permissions: %s", err.Error()))
+		e := connect.ErrorHttp{
+			StatusCode: http.StatusInternalServerError,
+			Message:    "failed to get permissions",
+		}
+		e.SendJsonErr(w)
+		return
+	}
+
+	if _, ok := pm["payroll"]; !ok {
+		errMsg := fmt.Sprintf("%s to create allowance account", exo.UserForbidden)
+		h.logger.Error(errMsg)
+		e := connect.ErrorHttp{
+			StatusCode: http.StatusForbidden,
+			Message:    errMsg,
+		}
+		e.SendJsonErr(w)
 		return
 	}
 
@@ -402,6 +410,8 @@ func (h *allowancesHandler) handleCreate(w http.ResponseWriter, r *http.Request)
 	// and return an error if it does
 	allowance, err := h.service.CreateAllowance(cmd.Username)
 	if err != nil {
+		errMsg := fmt.Sprintf("/allowances post-handler failed to create allowance account for user %s: %s", cmd.Username, err.Error())
+		h.logger.Error(errMsg)
 		h.service.HandleAllowanceError(w, err)
 		return
 	}
@@ -471,6 +481,29 @@ func (h *allowancesHandler) handleUpdateAllowance(w http.ResponseWriter, r *http
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusUnprocessableEntity,
 			Message:    err.Error(),
+		}
+		e.SendJsonErr(w)
+		return
+	}
+
+	// get permissions and validate user has permission to update allowance accounts, ie, payroll permission
+	pm, _, err := h.permission.GetPermissions(authorized.Claims.Subject)
+	if err != nil {
+		h.logger.Error(fmt.Sprintf("/allowances put-handler failed to get permissions: %s", err.Error()))
+		e := connect.ErrorHttp{
+			StatusCode: http.StatusInternalServerError,
+			Message:    "failed to get permissions",
+		}
+		e.SendJsonErr(w)
+		return
+	}
+
+	if _, ok := pm["payroll"]; !ok {
+		errMsg := fmt.Sprintf("%s to update /allowances/%s", slug, exo.UserForbidden)
+		h.logger.Error(errMsg)
+		e := connect.ErrorHttp{
+			StatusCode: http.StatusForbidden,
+			Message:    errMsg,
 		}
 		e.SendJsonErr(w)
 		return
