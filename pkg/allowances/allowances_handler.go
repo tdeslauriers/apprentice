@@ -116,36 +116,13 @@ func (h *allowancesHandler) handleGetAll(w http.ResponseWriter, r *http.Request)
 
 	// validate iam token
 	accessToken := r.Header.Get("Authorization")
-	authorized, err := h.iam.BuildAuthorized(getAllowancesAllowed, accessToken)
-	if err != nil {
+	if _, err := h.iam.BuildAuthorized(getAllowancesAllowed, accessToken); err != nil {
 		h.logger.Error(fmt.Sprintf("/allowances handler failed to authorize iam token: %s", err.Error()))
 		connect.RespondAuthFailure(connect.User, err, w)
 		return
 	}
 
-	// get permissions
-	pm, _, err := h.permission.GetPermissions(authorized.Claims.Subject)
-	if err != nil {
-		h.logger.Error(fmt.Sprintf("/allowances handler failed to get permissions: %s", err.Error()))
-		e := connect.ErrorHttp{
-			StatusCode: http.StatusInternalServerError,
-			Message:    "failed to get permissions",
-		}
-		e.SendJsonErr(w)
-		return
-	}
-
-	// check permissions
-	if _, ok := pm["payroll"]; !ok {
-		errMsg := fmt.Sprintf("%s to view /allowances", exo.UserForbidden)
-		h.logger.Error(errMsg)
-		e := connect.ErrorHttp{
-			StatusCode: http.StatusForbidden,
-			Message:    errMsg,
-		}
-		e.SendJsonErr(w)
-		return
-	}
+	// scope check is enough, no need to get permissions for this endpoint at this time.
 
 	// get all allowances
 	allowances, err := h.service.GetAllowances()
@@ -188,7 +165,7 @@ func (h *allowancesHandler) handleGetAllownace(w http.ResponseWriter, r *http.Re
 	}
 
 	// get permissions
-	pm, _, err := h.permission.GetPermissions(jot.Claims.Subject)
+	pm, _, err := h.permission.GetUserPermissions(jot.Claims.Subject)
 	if err != nil {
 		h.logger.Error(fmt.Sprintf("/allowances handler failed to get permissions: %s", err.Error()))
 		e := connect.ErrorHttp{
@@ -266,7 +243,7 @@ func (h *allowancesHandler) handleCreate(w http.ResponseWriter, r *http.Request)
 	}
 
 	// get permissions and validate user has permission to create allowance accounts, ie, payroll permission
-	pm, _, err := h.permission.GetPermissions(authorized.Claims.Subject)
+	pm, _, err := h.permission.GetUserPermissions(authorized.Claims.Subject)
 	if err != nil {
 		h.logger.Error(fmt.Sprintf("/allowances post-handler failed to get permissions: %s", err.Error()))
 		e := connect.ErrorHttp{
@@ -487,7 +464,7 @@ func (h *allowancesHandler) handleUpdateAllowance(w http.ResponseWriter, r *http
 	}
 
 	// get permissions and validate user has permission to update allowance accounts, ie, payroll permission
-	pm, _, err := h.permission.GetPermissions(authorized.Claims.Subject)
+	pm, _, err := h.permission.GetUserPermissions(authorized.Claims.Subject)
 	if err != nil {
 		h.logger.Error(fmt.Sprintf("/allowances put-handler failed to get permissions: %s", err.Error()))
 		e := connect.ErrorHttp{

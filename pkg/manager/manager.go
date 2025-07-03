@@ -28,6 +28,8 @@ import (
 type Manager interface {
 	// Run runs the task/allowance service
 	Run() error
+
+	// CloseDb closes the database connection
 	CloseDb() error
 }
 
@@ -185,30 +187,28 @@ func (m *manager) CloseDb() error {
 
 func (m *manager) Run() error {
 
-	// allowances
-	allowance := allowances.NewHandler(m.allowance, m.permissions, m.s2sVerifier, m.iamVerifier, m.s2sTokenProvider, m.identity)
-
-	// templates
-	template := templates.NewHandler(m.template, m.allowance, m.task, m.s2sVerifier, m.iamVerifier, m.s2sTokenProvider, m.identity)
-
-	// tasks
-	task := tasks.NewHandler(m.task, m.allowance, m.permissions, m.s2sVerifier, m.iamVerifier, m.s2sTokenProvider, m.identity)
-
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", diagnostics.HealthCheckHandler)
 
 	// allowances
+	allowance := allowances.NewHandler(m.allowance, m.permissions, m.s2sVerifier, m.iamVerifier, m.s2sTokenProvider, m.identity)
 	mux.HandleFunc("/account", allowance.HandleAccount)
 	mux.HandleFunc("/allowances", allowance.HandleAllowances)
 	mux.HandleFunc("/allowances/", allowance.HandleAllowance)
 
 	// templates
+	template := templates.NewHandler(m.template, m.allowance, m.task, m.s2sVerifier, m.iamVerifier, m.s2sTokenProvider, m.identity)
 	mux.HandleFunc("/templates/assignees", template.HandleGetAssignees)
 	mux.HandleFunc("/templates", template.HandleTemplates)
 	mux.HandleFunc("/templates/", template.HandleTemplate)
 
 	// tasks
+	task := tasks.NewHandler(m.task, m.allowance, m.permissions, m.s2sVerifier, m.iamVerifier, m.s2sTokenProvider, m.identity)
 	mux.HandleFunc("/tasks", task.HandleTasks)
+
+	// permissions
+	permission := permissions.NewHandler(m.permissions, m.s2sVerifier, m.iamVerifier)
+	mux.HandleFunc("/permissions", permission.HandlePermissions)
 
 	managerServer := &connect.TlsServer{
 		Addr:      m.config.ServicePort,

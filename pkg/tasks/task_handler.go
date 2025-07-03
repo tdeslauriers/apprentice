@@ -125,7 +125,7 @@ func (h *handler) handleGetTasks(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// get fine grain permissions map for query building
-	ps, _, err := h.permissions.GetPermissions(jot.Claims.Subject)
+	ps, _, err := h.permissions.GetUserPermissions(jot.Claims.Subject)
 	if err != nil {
 		h.logger.Error(fmt.Sprintf("/tasks handler failed to get %s's permissions: %v", jot.Claims.Subject, err))
 		// this is not a 401 or 403, just fetching.  Permission correctness (if applicable) is checked below
@@ -291,7 +291,7 @@ func (h *handler) handlePostTasks(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		defer wg.Done()
 
-		ps, _, err := h.permissions.GetPermissions(jot.Claims.Subject)
+		ps, _, err := h.permissions.GetUserPermissions(jot.Claims.Subject)
 		if err != nil {
 			h.logger.Error(fmt.Sprintf("/tasks handler failed to get %s's permissions: %v", jot.Claims.Subject, err))
 			errChan <- err

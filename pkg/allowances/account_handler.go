@@ -195,7 +195,7 @@ func (h *accountHandler) handleUpdateAccount(w http.ResponseWriter, r *http.Requ
 	// NOTE: not using concurrency here because if permissions are wrong, error immediately
 	// and not fetch and decrypt the allowance account record
 	// get permissions
-	pm, _, err := h.permissions.GetPermissions(authorized.Claims.Subject)
+	pm, _, err := h.permissions.GetUserPermissions(authorized.Claims.Subject)
 	if err != nil {
 		errMsg := fmt.Sprintf("/account update handler failed to get permissions for %s: %s", authorized.Claims.Subject, err.Error())
 		h.logger.Error(errMsg)

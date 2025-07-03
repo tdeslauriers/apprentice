@@ -25,7 +25,7 @@ func main() {
 		With(slog.String(util.ComponentKey, util.ComponentMain))
 
 	def := config.SvcDefinition{
-		ServiceName: "apprentice",
+		ServiceName: util.ServiceApprentice,
 		Tls:         config.MutualTls,
 		Requires: config.Requires{
 			S2sClient:        true,
@@ -41,7 +41,7 @@ func main() {
 	// load the configuration values for service creation
 	config, err := config.Load(def)
 	if err != nil {
-		logger.Error(fmt.Sprintf("error loading %s task management service configuration: %v", def.ServiceName, err))
+		logger.Error(fmt.Sprintf("error loading %s task management service configuration: %v", util.ServiceApprentice, err))
 		os.Exit(1)
 	}
 
@@ -54,7 +54,7 @@ func main() {
 	defer mgr.CloseDb()
 
 	if err := mgr.Run(); err != nil {
-		logger.Error(fmt.Sprintf("failed to %s task management  service: %v", def.ServiceName, err))
+		logger.Error(fmt.Sprintf("failed to run %s task management service: %v", def.ServiceName, err))
 		os.Exit(1)
 	}
 

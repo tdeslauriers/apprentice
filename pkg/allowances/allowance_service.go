@@ -123,18 +123,13 @@ func (s *allowanceService) GetAllowances() ([]tasks.Allowance, error) {
 	close(chErr)
 
 	// check for errors
-	errCount := len(chErr)
-	if errCount > 0 {
-		var sb strings.Builder
-		counter := 0
+
+	if len(chErr) > 0 {
+		errs := make([]string, 0, len(chErr))
 		for e := range chErr {
-			sb.WriteString(e.Error())
-			if counter < errCount-1 {
-				sb.WriteString("; ")
-			}
-			counter++
+			errs = append(errs, e.Error())
 		}
-		return nil, fmt.Errorf(sb.String())
+		return nil, fmt.Errorf(strings.Join(errs, "; "))
 	}
 
 	// collect clear text models
@@ -602,7 +597,7 @@ func (s *allowanceService) prepareAllowance(r AllowanceRecord) (*tasks.Allowance
 			ch <- fmt.Errorf("failed to decrypt balance for allowance account %s: %v", r.Id, err)
 		}
 
-		// convert decrypted balance 
+		// convert decrypted balance
 		bal := binary.LittleEndian.Uint64(dec)
 
 		*b = bal
