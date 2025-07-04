@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/tdeslauriers/carapace/pkg/connect"
 	"github.com/tdeslauriers/carapace/pkg/jwt"
+	exo "github.com/tdeslauriers/carapace/pkg/permissions"
 )
 
 var readPermissionsAllowed = []string{"r:apprentice:permissions:*"}
@@ -57,8 +59,8 @@ func (h *handler) HandlePermissions(w http.ResponseWriter, r *http.Request) {
 		return
 	case http.MethodPost:
 		// Handle POST request to create a new permission
-		// h.createPermission(w, r)
-		// return
+		h.createPermission(w, r)
+		return
 	default:
 		// Handle unsupported methods
 		e := connect.ErrorHttp{
@@ -111,6 +113,97 @@ func (h *handler) getPermissions(w http.ResponseWriter, r *http.Request) {
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusInternalServerError,
 			Message:    "failed to json encode permissions",
+		}
+		e.SendJsonErr(w)
+		return
+	}
+}
+
+// createPermission handles POST requests for the /permissions endpoint, creating a new permission.
+func (h *handler) createPermission(w http.ResponseWriter, r *http.Request) {
+
+	// validate the service token
+	s2sToken := r.Header.Get("Service-Authorization")
+	if _, err := h.s2s.BuildAuthorized(writePermissionsAllowed, s2sToken); err != nil {
+		h.logger.Error(fmt.Sprintf("/permissions handler failed to authorize s2s token: %v", err))
+		connect.RespondAuthFailure(connect.S2s, err, w)
+		return
+	}
+
+	// validate iam token
+	iamToken := r.Header.Get("Authorization")
+	authorized, err := h.iam.BuildAuthorized(writePermissionsAllowed, iamToken)
+	if err != nil {
+		h.logger.Error(fmt.Sprintf("/permissions handler failed to authorize iam token: %v", err))
+		connect.RespondAuthFailure(connect.User, err, w)
+		return
+	}
+
+	// parse the permission from the request body
+	var cmd exo.Permission
+	if err := json.NewDecoder(r.Body).Decode(&cmd); err != nil {
+		h.logger.Error(fmt.Sprintf("failed to decode permission: %v", err))
+		e := connect.ErrorHttp{
+			StatusCode: http.StatusBadRequest,
+			Message:    "failed to decode permission",
+		}
+		e.SendJsonErr(w)
+		return
+	}
+
+	// validate the permission
+	if err := cmd.Validate(); err != nil {
+		h.logger.Error(fmt.Sprintf("invalid permission: %v", err))
+		e := connect.ErrorHttp{
+			StatusCode: http.StatusUnprocessableEntity,
+			Message:    fmt.Sprintf("invalid permission: %v", err),
+		}
+		e.SendJsonErr(w)
+		return
+	}
+
+	// validate service name is correct
+	if strings.ToLower(strings.TrimSpace(cmd.Service)) != util.ServiceApprentice {
+		errMsg := fmt.Sprintf("invalid service name '%s': must be %s", cmd.Service, util.ServiceApprentice)
+		h.logger.Error(errMsg)
+		e := connect.ErrorHttp{
+			StatusCode: http.StatusUnprocessableEntity,
+			Message:    errMsg,
+		}
+		e.SendJsonErr(w)
+		return
+	}
+
+	// build permission persistence model
+	p := &Permission{
+		Name:        cmd.Name,
+		Service:     cmd.Service,
+		Description: cmd.Description,
+		Active:      cmd.Active,
+	}
+
+	// create the permission in persistence
+	permission, err := h.service.CreatePermission(p)
+	if err != nil {
+		h.logger.Error(fmt.Sprintf("failed to create permission: %v", err))
+		e := connect.ErrorHttp{
+			StatusCode: http.StatusInternalServerError,
+			Message:    "failed to create permission",
+		}
+		e.SendJsonErr(w)
+		return
+	}
+
+	// audit log
+	h.logger.Info(fmt.Sprintf("%s - %s created by %s", permission.Id, &permission.Name, authorized.Claims.Subject))
+
+	// respond with the created permission
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(permission); err != nil {
+		h.logger.Error(fmt.Sprintf("failed to encode permission: %v", err))
+		e := connect.ErrorHttp{
+			StatusCode: http.StatusInternalServerError,
+			Message:    "failed to json encode permission",
 		}
 		e.SendJsonErr(w)
 		return

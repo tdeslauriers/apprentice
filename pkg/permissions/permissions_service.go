@@ -4,7 +4,9 @@ import (
 	"apprentice/internal/util"
 	"fmt"
 	"log/slog"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/tdeslauriers/carapace/pkg/data"
 	"github.com/tdeslauriers/carapace/pkg/permissions"
 	"github.com/tdeslauriers/carapace/pkg/validate"
@@ -20,6 +22,10 @@ type Service interface {
 	// returns a map of permissions and a slice of permissions so the calling function can choose which to use.
 	// It returns an error if the permissions cannot be retrieved or if the user does not exist
 	GetUserPermissions(username string) (map[string]permissions.Permission, []permissions.Permission, error)
+
+	// CreatePermission creates a new permission in the database
+	// It returns the created permission or an error if the permission could not be created
+	CreatePermission(p *Permission) (*Permission, error)
 }
 
 // NewService creates a new Service interface, returning a pointer to the concrete implementation
@@ -120,4 +126,52 @@ func (s *service) GetUserPermissions(username string) (map[string]permissions.Pe
 
 	// return the permissions
 	return psMap, ps, nil
+}
+
+// CreatePermission is the concrete implementation of the service method which
+// creates a new permission in the database.
+// It returns the created permission or an error if the permission could not be created
+func (s *service) CreatePermission(p *Permission) (*Permission, error) {
+
+	// validate the permission
+	// redundant, but good practice.
+	if err := p.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid permission: %v", err)
+	}
+
+	// create uuid and set it in the permission record
+	id, err := uuid.NewRandom()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create uuid for permission: %v", err)
+	}
+	p.Id = id.String()
+
+	// create created_at timestamp and set it in the permission record
+	now := time.Now().UTC()
+	p.CreatedAt = data.CustomTime{Time: now}
+
+	// create slug and set it in the permission record
+	slug, err := uuid.NewRandom()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create slug for permission: %v", err)
+	}
+	p.Slug = slug.String()
+
+	// build the insert query
+	query := `INSERT INTO permission (
+				uuid,
+				name,
+				service,
+				description,
+				created_at,
+				active,
+				slug
+			) VALUES (?, ?, ?, ?, ?, ?, ?)`
+	if err := s.db.InsertRecord(query, p); err != nil {
+		return nil, fmt.Errorf("failed to create permission: %v", err)
+	}
+
+	s.logger.Info(fmt.Sprintf("%s - %s created", p.Id, p.Name))
+
+	return p, nil
 }
