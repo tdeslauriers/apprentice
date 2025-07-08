@@ -2,6 +2,7 @@ package tasks
 
 import (
 	"apprentice/internal/util"
+	"apprentice/pkg/permissions"
 	"database/sql"
 	"fmt"
 	"log/slog"
@@ -12,7 +13,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/tdeslauriers/carapace/pkg/data"
-	"github.com/tdeslauriers/carapace/pkg/permissions"
 	"github.com/tdeslauriers/carapace/pkg/tasks"
 )
 

@@ -209,6 +209,7 @@ func (m *manager) Run() error {
 	// permissions
 	permission := permissions.NewHandler(m.permissions, m.s2sVerifier, m.iamVerifier)
 	mux.HandleFunc("/permissions", permission.HandlePermissions)
+	mux.HandleFunc("/permissions/", permission.HandlePermission)
 
 	managerServer := &connect.TlsServer{
 		Addr:      m.config.ServicePort,

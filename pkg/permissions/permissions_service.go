@@ -2,13 +2,13 @@ package permissions
 
 import (
 	"apprentice/internal/util"
+	"database/sql"
 	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/tdeslauriers/carapace/pkg/data"
-	"github.com/tdeslauriers/carapace/pkg/permissions"
 	"github.com/tdeslauriers/carapace/pkg/validate"
 )
 
@@ -16,12 +16,20 @@ import (
 type Service interface {
 
 	// GetAllPermissions returns all permissions from the database
-	GetAllPermissions() ([]permissions.Permission, error)
+	GetAllPermissions() ([]Permission, error)
+
+	// GetPermissionBySlug returns a permission by its slug
+	// It returns the permission or an error if the permission does not exist
+	GetPermissionBySlug(slug string) (*Permission, error)
+
+	// UpdatePermission updates an existing permission in the database, and
+	// returns an error if the permission could not be updated
+	UpdatePermission(p *Permission) error
 
 	// GetUserPermissions returns the permissions for a given user/allowance account
 	// returns a map of permissions and a slice of permissions so the calling function can choose which to use.
 	// It returns an error if the permissions cannot be retrieved or if the user does not exist
-	GetUserPermissions(username string) (map[string]permissions.Permission, []permissions.Permission, error)
+	GetUserPermissions(username string) (map[string]Permission, []Permission, error)
 
 	// CreatePermission creates a new permission in the database
 	// It returns the created permission or an error if the permission could not be created
@@ -54,7 +62,7 @@ type service struct {
 
 // GetAllPermissions is the concrete implementation of the service method which
 // returns all permissions from the database.
-func (s *service) GetAllPermissions() ([]permissions.Permission, error) {
+func (s *service) GetAllPermissions() ([]Permission, error) {
 
 	qry := `SELECT
 				uuid,
@@ -65,7 +73,7 @@ func (s *service) GetAllPermissions() ([]permissions.Permission, error) {
 				active,
 				slug
 			FROM permission`
-	var ps []permissions.Permission
+	var ps []Permission
 	if err := s.db.SelectRecords(qry, &ps); err != nil {
 		return nil, fmt.Errorf("failed to get permissions: %v", err)
 	}
@@ -82,7 +90,7 @@ func (s *service) GetAllPermissions() ([]permissions.Permission, error) {
 // It returns a map of permissions and a slice of permissions so the calling
 // function can choose which to use.
 // It returns an error if the permissions cannot be retrieved or if the user does not exist
-func (s *service) GetUserPermissions(username string) (map[string]permissions.Permission, []permissions.Permission, error) {
+func (s *service) GetUserPermissions(username string) (map[string]Permission, []Permission, error) {
 
 	// validate is well formed email address: redundant, but good practice.
 	if err := validate.IsValidEmail(username); err != nil {
@@ -109,7 +117,7 @@ func (s *service) GetUserPermissions(username string) (map[string]permissions.Pe
 				LEFT OUTER JOIN allowance a ON ap.allowance_uuid = a.uuid
 			WHERE a.user_index = ?
 				AND p.active = true`
-	var ps []permissions.Permission
+	var ps []Permission
 	if err := s.db.SelectRecords(query, &ps, index); err != nil {
 		return nil, nil, err
 	}
@@ -119,13 +127,43 @@ func (s *service) GetUserPermissions(username string) (map[string]permissions.Pe
 	}
 
 	// create a map of permissions
-	psMap := make(map[string]permissions.Permission, len(ps))
+	psMap := make(map[string]Permission, len(ps))
 	for _, p := range ps {
 		psMap[p.Name] = p
 	}
 
 	// return the permissions
 	return psMap, ps, nil
+}
+
+// GetPermissionBySlug is the concrete implementation of the service method which
+// returns a permission by its slug.
+func (s *service) GetPermissionBySlug(slug string) (*Permission, error) {
+	// validate slug
+	if !validate.IsValidUuid(slug) {
+		return nil, fmt.Errorf("invalid slug: %s", slug)
+	}
+
+	// build the query to get the permission by slug
+	query := `SELECT
+				uuid,
+				name,
+				service,
+				description,
+				created_at,
+				active,
+				slug
+			FROM permission
+			WHERE slug = ?`
+	var p Permission
+	if err := s.db.SelectRecord(query, &p, slug); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("permission with slug '%s' not found", slug)
+		}
+		return nil, fmt.Errorf("failed to get permission by slug '%s': %v", slug, err)
+	}
+
+	return &p, nil
 }
 
 // CreatePermission is the concrete implementation of the service method which
@@ -174,4 +212,32 @@ func (s *service) CreatePermission(p *Permission) (*Permission, error) {
 	s.logger.Info(fmt.Sprintf("%s - %s created", p.Id, p.Name))
 
 	return p, nil
+}
+
+// UpdatePermission is the concrete implementation of the service method which
+// updates an existing permission in the database, and
+// returns an error if the permission could not be updated
+func (s *service) UpdatePermission(p *Permission) error {
+
+	// validate the permission
+	// redundant, but good practice.
+	if err := p.Validate(); err != nil {
+		return fmt.Errorf("invalid permission: %v", err)
+	}
+
+	// build the update query
+	query := `UPDATE permission SET
+				name = ?,
+				service = ?,
+				description = ?,
+				active = ?,
+				slug = ?
+			WHERE uuid = ?`
+	if err := s.db.UpdateRecord(query, p.Name, p.Service, p.Description, p.Active, p.Slug, p.Id); err != nil {
+		return fmt.Errorf("failed to update permission: %v", err)
+	}
+
+	s.logger.Info(fmt.Sprintf("permission record %s - %s updated", p.Id, p.Name))
+
+	return nil
 }

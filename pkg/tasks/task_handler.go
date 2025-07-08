@@ -282,7 +282,7 @@ func (h *handler) handlePostTasks(w http.ResponseWriter, r *http.Request) {
 	var (
 		wg        sync.WaitGroup
 		errChan   = make(chan error, 2)
-		psMapChan = make(chan map[string]exoPermissions.Permission, 1)
+		psMapChan = make(chan map[string]permissions.Permission, 1)
 		taskChan  = make(chan TaskRecord, 1)
 	)
 
