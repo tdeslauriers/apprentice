@@ -246,8 +246,8 @@ func (h *handler) createPermission(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// validate service name is correct
-	if strings.ToLower(strings.TrimSpace(cmd.Service)) != util.ServiceApprentice {
-		errMsg := fmt.Sprintf("invalid service name '%s': must be %s", cmd.Service, util.ServiceApprentice)
+	if strings.ToLower(strings.TrimSpace(cmd.ServiceName)) != util.ServiceApprentice {
+		errMsg := fmt.Sprintf("invalid service name '%s': must be %s", cmd.ServiceName, util.ServiceApprentice)
 		h.logger.Error(errMsg)
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusUnprocessableEntity,
@@ -258,9 +258,10 @@ func (h *handler) createPermission(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// build permission persistence model
-	p := &Permission{
-		Name:        cmd.Name,
-		Service:     cmd.Service,
+	p := &PermissionRecord{
+		ServiceName: cmd.ServiceName,
+		Permission:  strings.ToUpper(strings.TrimSpace(cmd.Permission)),
+		Name:        strings.TrimSpace(cmd.Name),
 		Description: cmd.Description,
 		Active:      cmd.Active,
 	}
@@ -327,7 +328,7 @@ func (h *handler) updatePermission(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// parse the permission from the request body
-	var cmd Permission
+	var cmd PermissionRecord
 	if err := json.NewDecoder(r.Body).Decode(&cmd); err != nil {
 		h.logger.Error(fmt.Sprintf("failed to decode permission: %v", err))
 		e := connect.ErrorHttp{
@@ -363,8 +364,8 @@ func (h *handler) updatePermission(w http.ResponseWriter, r *http.Request) {
 
 	// service field dropped for update, however, good to check it is correct
 	// since an incorrect value would indicate tampering
-	if strings.ToLower(strings.TrimSpace(cmd.Service)) != util.ServiceApprentice {
-		errMsg := fmt.Sprintf("invalid service name '%s': must be %s", cmd.Service, util.ServiceApprentice)
+	if strings.ToLower(strings.TrimSpace(cmd.ServiceName)) != util.ServiceApprentice {
+		errMsg := fmt.Sprintf("invalid service name '%s': must be %s", cmd.ServiceName, util.ServiceApprentice)
 		h.logger.Error(errMsg)
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusUnprocessableEntity,
@@ -375,10 +376,11 @@ func (h *handler) updatePermission(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// update the permission fields
-	record := &Permission{
+	record := &PermissionRecord{
 		Id:          p.Id,
-		Name:        cmd.Name,
-		Service:     p.Service, // may not be updated, keep the existing service
+		ServiceName: p.ServiceName,                                      // may not be updated, keep the existing service
+		Permission:  strings.ToUpper(strings.TrimSpace(cmd.Permission)), // may not be updated, keep the existing permission
+		Name:        strings.TrimSpace(cmd.Name),                        // may not be updated, keep the existing name
 		Description: cmd.Description,
 		Active:      cmd.Active,
 		Slug:        p.Slug,      // keep the existing slug

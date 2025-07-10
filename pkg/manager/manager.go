@@ -147,7 +147,7 @@ func New(config *config.Config) (Manager, error) {
 		remittance:       remittance.NewService(repository, indexer, cryptor, s2sTokenProvider, identity),
 		template:         templates.NewService(repository, cryptor),
 		task:             tasks.NewService(repository, indexer, cryptor),
-		permissions:      permissions.NewService(repository, indexer),
+		permissions:      permissions.NewService(repository, indexer, cryptor),
 		cleanup:          schedule.NewCleanup(repository),
 
 		logger: slog.Default().

@@ -110,7 +110,7 @@ func (h *accountHandler) handleGetAccount(w http.ResponseWriter, r *http.Request
 	// }
 
 	// // quick check of permissions
-	// _, isRemittee := pm["remittee"]
+	// _, isRemittee := pm[util.PermissionRemittee]
 
 	// if !isRemittee {
 	// 	errMsg := fmt.Sprintf("%s to view allowance account: %s", exo.UserForbidden, jot.Claims.Subject)
@@ -208,8 +208,8 @@ func (h *accountHandler) handleUpdateAccount(w http.ResponseWriter, r *http.Requ
 	}
 
 	// quick check permissions
-	_, isPayroll := pm["payroll"]
-	_, isRemittee := pm["remittee"]
+	_, isPayroll := pm[util.PermissionPayroll]
+	_, isRemittee := pm[util.PermissionRemittee]
 
 	// if the user is not a payroll or remittee, return forbidden
 	if !isPayroll && !isRemittee {

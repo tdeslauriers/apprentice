@@ -140,7 +140,7 @@ func (h *handler) handleGetTasks(w http.ResponseWriter, r *http.Request) {
 	// assignees require a permission check for 'all' or user uuids.
 	// all allowance users can query "me", but additional permissions are needed for everything else.
 	if params.Has("assignee") && params.Get("assignee") != "me" {
-		if _, ok := ps["payroll"]; !ok {
+		if _, ok := ps[util.PermissionPayroll]; !ok {
 			h.logger.Error(fmt.Sprintf("user %s does not have permission to get assignees=%s", jot.Claims.Subject, params.Get("assignee")))
 			e := connect.ErrorHttp{
 				StatusCode: http.StatusForbidden,
@@ -282,7 +282,7 @@ func (h *handler) handlePostTasks(w http.ResponseWriter, r *http.Request) {
 	var (
 		wg        sync.WaitGroup
 		errChan   = make(chan error, 2)
-		psMapChan = make(chan map[string]permissions.Permission, 1)
+		psMapChan = make(chan map[string]permissions.PermissionRecord, 1)
 		taskChan  = make(chan TaskRecord, 1)
 	)
 
@@ -342,8 +342,8 @@ func (h *handler) handlePostTasks(w http.ResponseWriter, r *http.Request) {
 	task := <-taskChan
 
 	// check for permissions
-	_, isPayroll := psMap["payroll"]
-	_, isRemittee := psMap["remittee"]
+	_, isPayroll := psMap[util.PermissionPayroll]
+	_, isRemittee := psMap[util.PermissionRemittee]
 
 	// handle permission errors
 	if !isPayroll && !isRemittee {

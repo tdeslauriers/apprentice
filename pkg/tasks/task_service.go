@@ -24,7 +24,7 @@ type TaskService interface {
 	// Note: this is meant to be a Get All Tasks function and will default to returning all tasks (based on permissions)
 	// username (should come from a valid source like jwt subject) needed if permissions do not
 	// allow getting all tasks: it will filter for just that user's tasks
-	GetTasks(username string, paramas url.Values, permissions map[string]permissions.Permission) ([]TaskRecord, error)
+	GetTasks(username string, paramas url.Values, permissions map[string]permissions.PermissionRecord) ([]TaskRecord, error)
 
 	// GetTask retrieves a single task record from the database including its template data and allowance username + slug
 	GetTask(slug string) (*TaskRecord, error)
@@ -66,7 +66,7 @@ type taskService struct {
 
 // GetTasks is a concrete implementation of the GetTasks method in the TaskService interface
 // internally, it uses a query builder to build the query based on the parameters and permissions passed in
-func (s *taskService) GetTasks(username string, params url.Values, permissions map[string]permissions.Permission) ([]TaskRecord, error) {
+func (s *taskService) GetTasks(username string, params url.Values, permissions map[string]permissions.PermissionRecord) ([]TaskRecord, error) {
 
 	// build the query string and arguments
 	qry, args, err := s.buildTaskQuery(username, params, permissions)
@@ -369,7 +369,7 @@ func (s *taskService) UpdateTask(t Task) error {
 // buildTaskQuery is a function that builds a SQL query string based on the provided parameters and permissions
 // It returns the query string and any error encountered during the process
 // username is needed if permissions dont allow getting all tasks: it will filter for just that user's tasks
-func (s *taskService) buildTaskQuery(username string, params url.Values, permissions map[string]permissions.Permission) (string, []interface{}, error) {
+func (s *taskService) buildTaskQuery(username string, params url.Values, permissions map[string]permissions.PermissionRecord) (string, []interface{}, error) {
 
 	// validate params: redundant, but good practice.
 	if err := tasks.ValidateQueryParams(params); err != nil {
@@ -407,7 +407,7 @@ func (s *taskService) buildTaskQuery(username string, params url.Values, permiss
 
 	// need to handle premissions to determine if the user has permission access all task records for all users
 	// or just their own tasks and add this filter to the query immediately before anything else
-	if _, ok := permissions["payroll"]; !ok {
+	if _, ok := permissions[util.PermissionPayroll]; !ok {
 
 		s.logger.Info(fmt.Sprintf("user %s does not have permission to get all tasks, building query for only their tasks", username))
 
@@ -467,7 +467,7 @@ func (s *taskService) buildTaskQuery(username string, params url.Values, permiss
 	// if assignee = "me" and user does NOT have the payroll permsision, then do nothing because filter already applied above
 	if params.Has("assignee") {
 
-		if _, ok := permissions["payroll"]; ok {
+		if _, ok := permissions[util.PermissionPayroll]; ok {
 
 			// split parameter values by comma if necessary and consolidate to single slice/array
 			var assigneeList []string

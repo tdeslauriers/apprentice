@@ -179,7 +179,7 @@ func (h *allowancesHandler) handleGetAllownace(w http.ResponseWriter, r *http.Re
 	// NOTE: not using concurrency here because if permissions are wrong, error immediately
 	// and not fetch and decrypt the allowance account record
 	// quick check permissions
-	if _, ok := pm["payroll"]; !ok {
+	if _, ok := pm[util.PermissionPayroll]; !ok {
 		errMsg := fmt.Sprintf("%s to view /allowances/{slug}", exo.UserForbidden)
 		h.logger.Error(errMsg)
 		e := connect.ErrorHttp{
@@ -254,7 +254,7 @@ func (h *allowancesHandler) handleCreate(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if _, ok := pm["payroll"]; !ok {
+	if _, ok := pm[util.PermissionPayroll]; !ok {
 		errMsg := fmt.Sprintf("%s to create allowance account", exo.UserForbidden)
 		h.logger.Error(errMsg)
 		e := connect.ErrorHttp{
@@ -475,7 +475,7 @@ func (h *allowancesHandler) handleUpdateAllowance(w http.ResponseWriter, r *http
 		return
 	}
 
-	if _, ok := pm["payroll"]; !ok {
+	if _, ok := pm[util.PermissionPayroll]; !ok {
 		errMsg := fmt.Sprintf("%s to update /allowances/%s", slug, exo.UserForbidden)
 		h.logger.Error(errMsg)
 		e := connect.ErrorHttp{

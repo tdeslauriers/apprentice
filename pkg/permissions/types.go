@@ -8,18 +8,20 @@ import (
 	"github.com/tdeslauriers/carapace/pkg/validate"
 )
 
-type Permission struct {
+type PermissionRecord struct {
 	Id          string          `db:"uuid" json:"uuid,omitempty"`
+	ServiceName string          `db:"service_name" json:"service_name"`
+	Permission  string          `db:"permission" json:"permission"`
 	Name        string          `db:"name" json:"name"`
-	Service     string          `db:"service" json:"service"`
 	Description string          `db:"description" json:"description"`
 	CreatedAt   data.CustomTime `db:"created_at" json:"created_at,omitempty"`
 	Active      bool            `db:"active" json:"active"`
 	Slug        string          `db:"slug" json:"slug,omitempty"`
+	SlugIndex   string          `db:"slug_index" json:"slug_index,omitempty"` // used for sorting permissions by slug
 }
 
 // Validate checks if the permission is valid/well-formed
-func (p *Permission) Validate() error {
+func (p *PermissionRecord) Validate() error {
 
 	// validate id if it is set
 	if p.Id != "" {
@@ -29,7 +31,7 @@ func (p *Permission) Validate() error {
 	}
 
 	// check service name
-	if ok, err := validate.IsValidServiceName(strings.TrimSpace(p.Service)); !ok {
+	if ok, err := validate.IsValidServiceName(strings.TrimSpace(p.ServiceName)); !ok {
 		return fmt.Errorf("invalid service name in permission payload: %v", err)
 	}
 
