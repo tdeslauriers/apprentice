@@ -123,7 +123,7 @@ func (h *handler) getPermissions(w http.ResponseWriter, r *http.Request) {
 	// scope check is enough, no need to get permissions for this endpoint at this time.
 
 	// get all permissions
-	permissions, err := h.service.GetAllPermissions()
+	_, permissions, err := h.service.GetAllPermissions()
 	if err != nil {
 		h.logger.Error(fmt.Sprintf("failed to get permissions: %v", err))
 		e := connect.ErrorHttp{
@@ -258,7 +258,7 @@ func (h *handler) createPermission(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// build permission persistence model
-	p := &PermissionRecord{
+	p := &exo.PermissionRecord{
 		ServiceName: cmd.ServiceName,
 		Permission:  strings.ToUpper(strings.TrimSpace(cmd.Permission)),
 		Name:        strings.TrimSpace(cmd.Name),
@@ -328,7 +328,7 @@ func (h *handler) updatePermission(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// parse the permission from the request body
-	var cmd PermissionRecord
+	var cmd exo.PermissionRecord
 	if err := json.NewDecoder(r.Body).Decode(&cmd); err != nil {
 		h.logger.Error(fmt.Sprintf("failed to decode permission: %v", err))
 		e := connect.ErrorHttp{
@@ -376,7 +376,7 @@ func (h *handler) updatePermission(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// update the permission fields
-	record := &PermissionRecord{
+	record := &exo.PermissionRecord{
 		Id:          p.Id,
 		ServiceName: p.ServiceName,                                      // may not be updated, keep the existing service
 		Permission:  strings.ToUpper(strings.TrimSpace(cmd.Permission)), // may not be updated, keep the existing permission

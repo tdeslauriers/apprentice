@@ -47,14 +47,16 @@ CREATE UNIQUE iNDEX idx_task_slug_index ON task (slug);
 
 CREATE TABLE permission (
     uuid CHAR(36) PRIMARY KEY,
-    service VARCHAR(32) NOT NULL,
-    name VARCHAR(64) NOT NULL,
-    description VARCHAR(255) NOT NULL,
+    service_name VARCHAR(32) NOT NULL,
+    permission VARCHAR(128) NOT NULL,
+    name VARCHAR(128) NOT NULL,
+    description VARCHAR(512) NOT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT UTC_TIMESTAMP,
-    active BOOLEAN NOT NULL DEFAULT TRUE,
-    slug CHAR(36) NOT NULL
+    active BOOLEAN NOT NULL,
+    slug CHAR(128) NOT NULL
+    slug_index CHAR(128) NOT NULL,
 );
-CREATE UNIQUE iNDEX idx_permission_slug_index ON permission (slug);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_permission_slug_index ON permission (slug_index);
 
 CREATE TABLE allowance_permission (
     id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,

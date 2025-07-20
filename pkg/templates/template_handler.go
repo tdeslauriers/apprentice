@@ -294,6 +294,7 @@ func (h *handler) handleGetTemplates(w http.ResponseWriter, r *http.Request) {
 // it validates the incoming request, and then calls the template service to create a new template
 func (h *handler) handlePostTemplates(w http.ResponseWriter, r *http.Request) {
 
+	
 	// validate s2s token
 	svcToken := r.Header.Get("Service-Authorization")
 	if _, err := h.s2s.BuildAuthorized(writeTemplatesAllowed, svcToken); err != nil {

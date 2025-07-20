@@ -2,7 +2,6 @@ package tasks
 
 import (
 	"apprentice/internal/util"
-	"apprentice/pkg/permissions"
 	"database/sql"
 	"fmt"
 	"log/slog"
@@ -13,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/tdeslauriers/carapace/pkg/data"
+	exo "github.com/tdeslauriers/carapace/pkg/permissions"
 	"github.com/tdeslauriers/carapace/pkg/tasks"
 )
 
@@ -24,7 +24,7 @@ type TaskService interface {
 	// Note: this is meant to be a Get All Tasks function and will default to returning all tasks (based on permissions)
 	// username (should come from a valid source like jwt subject) needed if permissions do not
 	// allow getting all tasks: it will filter for just that user's tasks
-	GetTasks(username string, paramas url.Values, permissions map[string]permissions.PermissionRecord) ([]TaskRecord, error)
+	GetTasks(username string, paramas url.Values, permissions map[string]exo.PermissionRecord) ([]TaskRecord, error)
 
 	// GetTask retrieves a single task record from the database including its template data and allowance username + slug
 	GetTask(slug string) (*TaskRecord, error)
@@ -66,7 +66,7 @@ type taskService struct {
 
 // GetTasks is a concrete implementation of the GetTasks method in the TaskService interface
 // internally, it uses a query builder to build the query based on the parameters and permissions passed in
-func (s *taskService) GetTasks(username string, params url.Values, permissions map[string]permissions.PermissionRecord) ([]TaskRecord, error) {
+func (s *taskService) GetTasks(username string, params url.Values, permissions map[string]exo.PermissionRecord) ([]TaskRecord, error) {
 
 	// build the query string and arguments
 	qry, args, err := s.buildTaskQuery(username, params, permissions)
@@ -369,7 +369,7 @@ func (s *taskService) UpdateTask(t Task) error {
 // buildTaskQuery is a function that builds a SQL query string based on the provided parameters and permissions
 // It returns the query string and any error encountered during the process
 // username is needed if permissions dont allow getting all tasks: it will filter for just that user's tasks
-func (s *taskService) buildTaskQuery(username string, params url.Values, permissions map[string]permissions.PermissionRecord) (string, []interface{}, error) {
+func (s *taskService) buildTaskQuery(username string, params url.Values, permissions map[string]exo.PermissionRecord) (string, []interface{}, error) {
 
 	// validate params: redundant, but good practice.
 	if err := tasks.ValidateQueryParams(params); err != nil {

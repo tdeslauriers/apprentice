@@ -16,7 +16,7 @@ import (
 
 	"github.com/tdeslauriers/carapace/pkg/connect"
 	"github.com/tdeslauriers/carapace/pkg/jwt"
-	exoPermissions "github.com/tdeslauriers/carapace/pkg/permissions"
+	exo "github.com/tdeslauriers/carapace/pkg/permissions"
 	"github.com/tdeslauriers/carapace/pkg/profile"
 	"github.com/tdeslauriers/carapace/pkg/session/provider"
 	"github.com/tdeslauriers/carapace/pkg/tasks"
@@ -125,7 +125,7 @@ func (h *handler) handleGetTasks(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// get fine grain permissions map for query building
-	ps, _, err := h.permissions.GetUserPermissions(jot.Claims.Subject)
+	ps, _, err := h.permissions.GetAllowancePermissions(jot.Claims.Subject)
 	if err != nil {
 		h.logger.Error(fmt.Sprintf("/tasks handler failed to get %s's permissions: %v", jot.Claims.Subject, err))
 		// this is not a 401 or 403, just fetching.  Permission correctness (if applicable) is checked below
@@ -144,7 +144,7 @@ func (h *handler) handleGetTasks(w http.ResponseWriter, r *http.Request) {
 			h.logger.Error(fmt.Sprintf("user %s does not have permission to get assignees=%s", jot.Claims.Subject, params.Get("assignee")))
 			e := connect.ErrorHttp{
 				StatusCode: http.StatusForbidden,
-				Message:    fmt.Sprintf("%s to get assignees=%s: %s", exoPermissions.UserForbidden, params.Get("assignee"), jot.Claims.Subject),
+				Message:    fmt.Sprintf("%s to get assignees=%s: %s", exo.UserForbidden, params.Get("assignee"), jot.Claims.Subject),
 			}
 			e.SendJsonErr(w)
 			return
@@ -282,7 +282,7 @@ func (h *handler) handlePostTasks(w http.ResponseWriter, r *http.Request) {
 	var (
 		wg        sync.WaitGroup
 		errChan   = make(chan error, 2)
-		psMapChan = make(chan map[string]permissions.PermissionRecord, 1)
+		psMapChan = make(chan map[string]exo.PermissionRecord, 1)
 		taskChan  = make(chan TaskRecord, 1)
 	)
 
@@ -291,7 +291,7 @@ func (h *handler) handlePostTasks(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		defer wg.Done()
 
-		ps, _, err := h.permissions.GetUserPermissions(jot.Claims.Subject)
+		ps, _, err := h.permissions.GetAllowancePermissions(jot.Claims.Subject)
 		if err != nil {
 			h.logger.Error(fmt.Sprintf("/tasks handler failed to get %s's permissions: %v", jot.Claims.Subject, err))
 			errChan <- err
@@ -347,7 +347,7 @@ func (h *handler) handlePostTasks(w http.ResponseWriter, r *http.Request) {
 
 	// handle permission errors
 	if !isPayroll && !isRemittee {
-		errMsg := fmt.Sprintf("%s to update task slug (%s): %s", exoPermissions.UserForbidden, cmd.TaskSlug, jot.Claims.Subject)
+		errMsg := fmt.Sprintf("%s to update task slug (%s): %s", exo.UserForbidden, cmd.TaskSlug, jot.Claims.Subject)
 		h.logger.Error(errMsg)
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusForbidden,
@@ -358,7 +358,7 @@ func (h *handler) handlePostTasks(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !isPayroll && (cmd.Status == "is_satisfactory" || cmd.Status == "is_proactive") {
-		errMsg := fmt.Sprintf("%s to update task (slug %s) status %s: %s", exoPermissions.UserForbidden, cmd.TaskSlug, cmd.Status, jot.Claims.Subject)
+		errMsg := fmt.Sprintf("%s to update task (slug %s) status %s: %s", exo.UserForbidden, cmd.TaskSlug, cmd.Status, jot.Claims.Subject)
 		h.logger.Error(errMsg)
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusForbidden,
@@ -369,7 +369,7 @@ func (h *handler) handlePostTasks(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !isPayroll && (task.Username != jot.Claims.Subject || !isRemittee) {
-		errMsg := fmt.Sprintf("%s to update task (slug %s): %s", exoPermissions.UserForbidden, cmd.TaskSlug, jot.Claims.Subject)
+		errMsg := fmt.Sprintf("%s to update task (slug %s): %s", exo.UserForbidden, cmd.TaskSlug, jot.Claims.Subject)
 		h.logger.Error(errMsg)
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusForbidden,

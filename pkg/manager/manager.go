@@ -195,6 +195,7 @@ func (m *manager) Run() error {
 	mux.HandleFunc("/account", allowance.HandleAccount)
 	mux.HandleFunc("/allowances", allowance.HandleAllowances)
 	mux.HandleFunc("/allowances/", allowance.HandleAllowance)
+	mux.HandleFunc("/allowances/permissions", allowance.HandlePermissions)
 
 	// templates
 	template := templates.NewHandler(m.template, m.allowance, m.task, m.s2sVerifier, m.iamVerifier, m.s2sTokenProvider, m.identity)

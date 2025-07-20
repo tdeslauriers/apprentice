@@ -31,13 +31,15 @@ const (
 type Handler interface {
 	AllowancesHandler
 	AccountHandler
+	AllowancePermissionsHandler
 }
 
 // NewHandler creates a new Handler interface, returning a pointe(s) to the concrete implementation(s)
 func NewHandler(s Service, p permissions.Service, s2s, iam jwt.Verifier, tkn provider.S2sTokenProvider, identity connect.S2sCaller) Handler {
 	return &handler{
-		AllowancesHandler: NewAllowancesHandler(s, p, s2s, iam, tkn, identity),
-		AccountHandler:    NewAccountHandler(s, p, s2s, iam),
+		AllowancesHandler:           NewAllowancesHandler(s, p, s2s, iam, tkn, identity),
+		AllowancePermissionsHandler: NewAllowancePermissionsHandler(s, s2s, iam),
+		AccountHandler:              NewAccountHandler(s, p, s2s, iam),
 	}
 }
 
@@ -47,10 +49,12 @@ var _ Handler = (*handler)(nil)
 type handler struct {
 	AllowancesHandler
 	AccountHandler
+	AllowancePermissionsHandler
 }
 
 // Service is an aggregate interface for all allowances service functionality
 type Service interface {
+	AllowancePermissionsService
 	AllowanceService
 	AllowanceErrorService
 }
@@ -58,8 +62,9 @@ type Service interface {
 // NewService creates a new Service interface, returning a pointer to the concrete implementation
 func NewService(sql data.SqlRepository, i data.Indexer, c data.Cryptor) Service {
 	return &service{
-		AllowanceService:      NewAllowanceService(sql, i, c),
-		AllowanceErrorService: NewAllowanceErrorService(),
+		AllowancePermissionsService: NewAllowancePermissionsService(sql, i, c),
+		AllowanceService:            NewAllowanceService(sql, i, c),
+		AllowanceErrorService:       NewAllowanceErrorService(),
 	}
 }
 
@@ -67,6 +72,7 @@ var _ Service = (*service)(nil)
 
 // service is the concrete implementation of the Service interface
 type service struct {
+	AllowancePermissionsService
 	AllowanceService
 	AllowanceErrorService
 }
@@ -100,10 +106,10 @@ func (c *CreateAllowanceCmd) ValidateCmd() error {
 // or json model because the balance is stored as an ecrypted string in the db
 type AllowanceRecord struct {
 	Id           string          `db:"uuid"`
-	Balance      string          `db:"balance"` // encrypted string vs decrypted float64
-	Username     string          `db:"username"`
+	Balance      string          `db:"balance"`  // encrypted string vs decrypted float64 in db
+	Username     string          `db:"username"` // encrypted email in db
 	UserIndex    string          `db:"user_index"`
-	Slug         string          `db:"slug"`
+	Slug         string          `db:"slug"` // encrypted slug in db
 	SlugIndex    string          `db:"slug_index"`
 	CreatedAt    data.CustomTime `db:"created_at"`
 	UpdatedAt    data.CustomTime `db:"updated_at"`

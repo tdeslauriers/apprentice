@@ -2,6 +2,7 @@ package allowances
 
 import (
 	"apprentice/internal/util"
+	"apprentice/pkg/permissions"
 	"database/sql"
 	"encoding/binary"
 	"fmt"
@@ -47,9 +48,10 @@ type AllowanceService interface {
 // NewAllowanceService creates a new Service interface, returning a pointer to the concrete implementation
 func NewAllowanceService(sql data.SqlRepository, i data.Indexer, c data.Cryptor) AllowanceService {
 	return &allowanceService{
-		sql:     sql,
-		indexer: i,
-		cryptor: c,
+		sql:        sql,
+		indexer:    i,
+		cryptor:    c,
+		permission: permissions.NewService(sql, i, c),
 
 		logger: slog.Default().
 			With(slog.String(util.ServiceKey, util.ServiceApprentice)).
@@ -62,9 +64,10 @@ var _ AllowanceService = (*allowanceService)(nil)
 
 // allowanceService is the concrete implementation of the Service interface
 type allowanceService struct {
-	sql     data.SqlRepository
-	indexer data.Indexer
-	cryptor data.Cryptor
+	sql        data.SqlRepository
+	indexer    data.Indexer
+	cryptor    data.Cryptor
+	permission permissions.Service
 
 	logger *slog.Logger
 }
@@ -180,7 +183,20 @@ func (s *allowanceService) GetBySlug(slug string) (*tasks.Allowance, error) {
 	}
 
 	// decrypt and convert to clear text model
-	return s.prepareAllowance(record)
+	a, err := s.prepareAllowance(record)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt/prepare allowance account %s: %v", record.Id, err)
+	}
+
+	// get permissions for allowance account
+	_, ps, err := s.permission.GetAllowancePermissions(a.Username)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get permissions for allowance account %s: %v", a.Id, err)
+	}
+
+	a.Permissions = ps
+
+	return a, nil
 }
 
 // GetByUser is the concrete implementation of the Service interface method GetByUser
@@ -222,7 +238,20 @@ func (s *allowanceService) GetByUser(username string) (*tasks.Allowance, error) 
 	}
 
 	// decrypt and convert to clear text model
-	return s.prepareAllowance(record)
+	a, err := s.prepareAllowance(record)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt/prepare allowance account %s: %v", record.Id, err)
+	}
+
+	// get permissions for allowance account
+	_, ps, err := s.permission.GetAllowancePermissions(a.Username)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get permissions for allowance account %s: %v", a.Id, err)
+	}
+
+	a.Permissions = ps
+
+	return a, nil
 }
 
 // GetByUsers is the concrete implementation of the Service interface method GetByUsers

@@ -13,15 +13,17 @@ const (
 	// component keys
 	ComponentKey = "component"
 
-	ComponentMain             = "main"
-	ComponentManager          = "manager"
-	ComponentAllowances       = "allowances"
-	ComponentAllowanceAccount = "allowance account"
-	ComponentTasks            = "tasks"
-	ComponentTemplates        = "task templates"
-	ComponentPermissions      = "fine grain permissions"
-	ComponentScheduledTasks   = "scheduled tasks"
-	ComponentRemittance       = "remittance"
+	ComponentMain                         = "main"
+	ComponentManager                      = "manager"
+	ComponentAllowances                   = "allowances"
+	ComponentAllowanceAccount             = "allowance account"
+	ComponentTasks                        = "tasks"
+	ComponentTemplates                    = "task templates"
+	ComponentPermissions                  = "fine grain permissions"
+	ComponentScheduledTasks               = "scheduled tasks"
+	ComponentRemittance                   = "remittance"
+	ComponentAllownacePermisssionsHandler = "allowance permissions handler"
+	ComponentAllowancesPermissionsService = "allowance permissions service"
 
 	ServiceKey = "service"
 
