@@ -17,6 +17,11 @@ import (
 // AllowancePermissionsService defines the interface for managing permissions related to allowances
 type AllowancePermissionsService interface {
 
+	// GetAllowancePermissions returns the permissions for a given user/allowance account
+	// NOTE: at this time, this is a wrapper around the permissions service's functionality with
+	// the same name.
+	GetAllowancePermissions(username string) (map[string]exo.PermissionRecord, []exo.PermissionRecord, error)
+
 	// UpdateAllowancePermissions updates the permissions for a given user/allowance account in the datebase
 	// It returns a map of added permissions, removed permissions, and an error if the update fails.
 	// Slugs are the slugs for the permission records.
@@ -45,6 +50,15 @@ type allowancePermissionsService struct {
 	permission permissions.Service
 
 	logger *slog.Logger
+}
+
+// GetAllowancePermissions is the concrete implementation of the service method which
+// returns the permissions for a given user/allowance account.
+// NOTE: at this time, this is a wrapper around the permissions service's functionality with
+// the same name.
+func (s *allowancePermissionsService) GetAllowancePermissions(username string) (map[string]exo.PermissionRecord, []exo.PermissionRecord, error) {
+
+	return s.permission.GetAllowancePermissions(username)
 }
 
 // UpdateAllowancePermissions is the concrete implementation of the service method which

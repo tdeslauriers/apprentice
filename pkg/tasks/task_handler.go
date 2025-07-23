@@ -22,8 +22,8 @@ import (
 	"github.com/tdeslauriers/carapace/pkg/tasks"
 )
 
-var readTasksAllowed = []string{"r:apprentice:tasks:*"}
-var writeTasksAllowed = []string{"w:apprentice:tasks:*"}
+var readTasksAllowed = []string{"r:apprentice:*", "r:apprentice:tasks:*"}
+var writeTasksAllowed = []string{"w:apprentice:*", "w:apprentice:tasks:*"}
 
 // Handler is an interface to handle task service functionality
 // It is used to handle HTTP requests and responses
@@ -102,7 +102,7 @@ func (h *handler) handleGetTasks(w http.ResponseWriter, r *http.Request) {
 	// validate iam token
 	// need subject to determine fine grain permissions
 	iamToken := r.Header.Get("Authorization")
-	jot, err := h.iam.BuildAuthorized(readTasksAllowed, iamToken)
+	authorized, err := h.iam.BuildAuthorized(readTasksAllowed, iamToken)
 	if err != nil {
 		h.logger.Error(fmt.Sprintf("/tasks handler failed to authorize iam token: %v", err))
 		connect.RespondAuthFailure(connect.User, err, w)
@@ -125,9 +125,9 @@ func (h *handler) handleGetTasks(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// get fine grain permissions map for query building
-	ps, _, err := h.permissions.GetAllowancePermissions(jot.Claims.Subject)
+	ps, _, err := h.permissions.GetAllowancePermissions(authorized.Claims.Subject)
 	if err != nil {
-		h.logger.Error(fmt.Sprintf("/tasks handler failed to get %s's permissions: %v", jot.Claims.Subject, err))
+		h.logger.Error(fmt.Sprintf("/tasks handler failed to get %s's permissions: %v", authorized.Claims.Subject, err))
 		// this is not a 401 or 403, just fetching.  Permission correctness (if applicable) is checked below
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusInternalServerError,
@@ -141,10 +141,10 @@ func (h *handler) handleGetTasks(w http.ResponseWriter, r *http.Request) {
 	// all allowance users can query "me", but additional permissions are needed for everything else.
 	if params.Has("assignee") && params.Get("assignee") != "me" {
 		if _, ok := ps[util.PermissionPayroll]; !ok {
-			h.logger.Error(fmt.Sprintf("user %s does not have permission to get assignees=%s", jot.Claims.Subject, params.Get("assignee")))
+			h.logger.Error(fmt.Sprintf("user %s does not have permission to get assignees=%s", authorized.Claims.Subject, params.Get("assignee")))
 			e := connect.ErrorHttp{
 				StatusCode: http.StatusForbidden,
-				Message:    fmt.Sprintf("%s to get assignees=%s: %s", exo.UserForbidden, params.Get("assignee"), jot.Claims.Subject),
+				Message:    fmt.Sprintf("%s to get assignees=%s: %s", exo.UserForbidden, params.Get("assignee"), authorized.Claims.Subject),
 			}
 			e.SendJsonErr(w)
 			return
@@ -152,7 +152,7 @@ func (h *handler) handleGetTasks(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// sebd params and permissions to task service for user in query building
-	records, err := h.svc.GetTasks(jot.Claims.Subject, params, ps)
+	records, err := h.svc.GetTasks(authorized.Claims.Subject, params, ps)
 	if err != nil {
 		h.logger.Error(fmt.Sprintf("/tasks handler failed to get tasks: %v", err))
 		h.svc.HandleServiceError(w, err)
