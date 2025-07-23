@@ -77,7 +77,7 @@ func (h *allowancePermissionsHandler) HandlePermissions(w http.ResponseWriter, r
 func (h *allowancePermissionsHandler) getAllowancePermissions(w http.ResponseWriter, r *http.Request) {
 
 	// validate the s2s token
-	s2sToken := r.Header.Get("ServiceAuthorization")
+	s2sToken := r.Header.Get("Service-Authorization")
 	if _, err := h.s2sVerify.BuildAuthorized(readAllowancePermissionsAllowed, s2sToken); err != nil {
 		h.logger.Error(fmt.Sprintf("allowance permissions endpoint failed to verify service token: %v", err))
 		connect.RespondAuthFailure(connect.S2s, err, w)
