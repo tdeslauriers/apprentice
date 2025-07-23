@@ -88,8 +88,10 @@ func (s *allowancePermissionsService) GetAllowancePermissions(username string) (
 		return nil, nil, err
 	}
 
+	// It is possible for patrons to have zero permissions.
+	// This will be the default case, so we return an empty map and slice.
 	if len(ps) < 1 {
-		return nil, nil, fmt.Errorf("no permissions found for user %s", username)
+		s.logger.Warn(fmt.Sprintf("no permissions found for allowance account with username %s", username))
 	}
 
 	// decrypt and create a map of permissions
