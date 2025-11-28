@@ -1,8 +1,7 @@
 package templates
 
 import (
-	"apprentice/internal/util"
-	"apprentice/pkg/tasks"
+	"context"
 	"database/sql"
 	"fmt"
 	"log/slog"
@@ -10,9 +9,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tdeslauriers/apprentice/internal/util"
+
+	"github.com/tdeslauriers/apprentice/pkg/allowances"
+	"github.com/tdeslauriers/apprentice/pkg/tasks"
+
 	"github.com/google/uuid"
+	"github.com/tdeslauriers/carapace/pkg/connect"
 	"github.com/tdeslauriers/carapace/pkg/data"
-	exotasks "github.com/tdeslauriers/carapace/pkg/tasks"
 	"github.com/tdeslauriers/carapace/pkg/validate"
 )
 
@@ -20,25 +24,25 @@ import (
 type TemplateService interface {
 
 	// GetTemplates retrieves all active template from the database including it's assignees.
-	GetTemplates() ([]exotasks.Template, error)
+	GetTemplates() ([]Template, error)
 
 	// GetTemplate retrieves a template record from the database by slug including it's assignees.
-	GetTemplate(slug string) (*exotasks.Template, error)
+	GetTemplate(slug string) (*Template, error)
 
 	// CreateTemplate creates a new template record in the database
-	CreateTemplate(cmd exotasks.TemplateCmd) (*Template, error)
+	CreateTemplate(ctx context.Context, cmd TemplateCmd) (*TemplateRecord, error)
 
 	// UpdateTemplate updates a template record in the database
-	UpdateTemplate(t *Template) error
+	UpdateTemplate(ctx context.Context, t *TemplateRecord) error
 
 	// CreateAllowanceXref creates a new allowance-template xref record in the database
-	CreateAllowanceXref(t *Template, a *exotasks.Allowance) (*AllowanceTemplateXref, error)
+	CreateAllowanceXref(ctx context.Context, t *TemplateRecord, a *allowances.Allowance) (*AllowanceTemplateXref, error)
 
 	// DeleteAllowanceXref deletes an allowance-template xref record from the database
-	DeleteAllowanceXref(t *Template, a *exotasks.Allowance) error
+	DeleteAllowanceXref(ctx context.Context, t *TemplateRecord, a *allowances.Allowance) error
 
 	// CreateTaskXref creates a new task-template xref record in the database
-	CreateTaskXref(t *Template, ta *tasks.Task) (*TemplateTaskXref, error)
+	CreateTaskXref(ctx context.Context, t *TemplateRecord, ta *tasks.TaskRecord) (*TemplateTaskXref, error)
 }
 
 // NewService creates a new Service interface, returning a pointer to the concrete implementation
@@ -66,7 +70,7 @@ type templateService struct {
 
 // GetTemplates is a concrete implementation of the GetTemplates method in the TemplateService interface
 // it retrieves all active task templates from the database including their assignees
-func (s *templateService) GetTemplates() ([]exotasks.Template, error) {
+func (s *templateService) GetTemplates() ([]Template, error) {
 
 	qry := `
 		SELECT 
@@ -146,10 +150,10 @@ func (s *templateService) GetTemplates() ([]exotasks.Template, error) {
 	}
 
 	// consolidate to unique template records with usernames slices
-	uniqueTemplates := make(map[string]exotasks.Template, len(templates))
+	uniqueTemplates := make(map[string]Template, len(templates))
 	for _, t := range templates {
 		if _, ok := uniqueTemplates[t.Id]; !ok {
-			uniqueTemplates[t.Id] = exotasks.Template{
+			uniqueTemplates[t.Id] = Template{
 				Id:           t.Id,
 				Name:         t.Name,
 				Description:  t.Description,
@@ -159,12 +163,12 @@ func (s *templateService) GetTemplates() ([]exotasks.Template, error) {
 				Slug:         t.TemplateSlug,
 				CreatedAt:    t.CreatedAt,
 				IsArchived:   t.IsArchived,
-				Assignees:    make([]exotasks.Assignee, 0),
+				Assignees:    make([]Assignee, 0),
 			}
 		}
 
 		template := uniqueTemplates[t.Id]
-		template.Assignees = append(template.Assignees, exotasks.Assignee{
+		template.Assignees = append(template.Assignees, Assignee{
 			Username:      *uniqueEncrypted[t.Username],
 			AllowanceSlug: *uniqueEncrypted[t.AllowanceSlug],
 		})
@@ -172,7 +176,7 @@ func (s *templateService) GetTemplates() ([]exotasks.Template, error) {
 	}
 
 	// convert map to slice
-	result := make([]exotasks.Template, 0, len(uniqueTemplates))
+	result := make([]Template, 0, len(uniqueTemplates))
 	for _, t := range uniqueTemplates {
 		result = append(result, t)
 	}
@@ -183,7 +187,7 @@ func (s *templateService) GetTemplates() ([]exotasks.Template, error) {
 }
 
 // GetTemplate is a concrete implementation of the GetTemplate method in the TemplateService interface
-func (s *templateService) GetTemplate(slug string) (*exotasks.Template, error) {
+func (s *templateService) GetTemplate(slug string) (*Template, error) {
 
 	// validate slug
 	// redundant check, but good practice
@@ -269,7 +273,7 @@ func (s *templateService) GetTemplate(slug string) (*exotasks.Template, error) {
 	}
 
 	// consolidate to unique template record with usernames slice
-	uniqueTemplate := exotasks.Template{
+	uniqueTemplate := Template{
 		Id:           templates[0].Id,
 		Name:         templates[0].Name,
 		Description:  templates[0].Description,
@@ -279,11 +283,11 @@ func (s *templateService) GetTemplate(slug string) (*exotasks.Template, error) {
 		Slug:         templates[0].TemplateSlug,
 		CreatedAt:    templates[0].CreatedAt,
 		IsArchived:   templates[0].IsArchived,
-		Assignees:    make([]exotasks.Assignee, 0),
+		Assignees:    make([]Assignee, 0),
 	}
 	for _, t := range templates {
 
-		uniqueTemplate.Assignees = append(uniqueTemplate.Assignees, exotasks.Assignee{
+		uniqueTemplate.Assignees = append(uniqueTemplate.Assignees, Assignee{
 			Username:      t.Username,
 			AllowanceSlug: t.AllowanceSlug,
 		})
@@ -295,33 +299,35 @@ func (s *templateService) GetTemplate(slug string) (*exotasks.Template, error) {
 }
 
 // CreateTemplate is a concrete implementation of the CreateTemplate method in the TemplateService interface
-func (s *templateService) CreateTemplate(cmd exotasks.TemplateCmd) (*Template, error) {
+func (s *templateService) CreateTemplate(ctx context.Context, cmd TemplateCmd) (*TemplateRecord, error) {
+
+	// add telemetry fields to logger if exists in context
+	log := s.logger
+	if telemetry, ok := connect.GetTelemetryFromContext(ctx); ok && telemetry != nil {
+		log = log.With(telemetry.TelemetryFields()...)
+	} else {
+		log.Warn("no telemetry found in context for CreateTemplate")
+	}
 
 	// validate the command
 	// redundant check, but good practice
 	if err := cmd.ValidateCmd(); err != nil {
-		errMsg := fmt.Sprintf("invalid template create-command: %v", err)
-		s.logger.Error(errMsg)
-		return nil, fmt.Errorf(errMsg)
+		return nil, fmt.Errorf("invalid template create-command: %v", err)
 	}
 
 	// generate UUIDs for the template id and slug
 	id, err := uuid.NewRandom()
 	if err != nil {
-		errMsg := fmt.Sprintf("failed to generate UUID for template id: %v", err)
-		s.logger.Error(errMsg)
-		return nil, fmt.Errorf(errMsg)
+		return nil, fmt.Errorf("failed to generate UUID for template id: %v", err)
 	}
 
 	slug, err := uuid.NewRandom()
 	if err != nil {
-		errMsg := fmt.Sprintf("failed to generate UUID for template slug: %v", err)
-		s.logger.Error(errMsg)
-		return nil, fmt.Errorf(errMsg)
+		return nil, fmt.Errorf("failed to generate UUID for template slug: %v", err)
 	}
 
 	// create the new template record
-	t := Template{
+	t := TemplateRecord{
 		Id:          id.String(),
 		Name:        cmd.Name,
 		Description: cmd.Description,
@@ -335,18 +341,24 @@ func (s *templateService) CreateTemplate(cmd exotasks.TemplateCmd) (*Template, e
 	qry := `INSERT INTO template (uuid, name, description, cadence, category, is_calculated, slug, created_at, is_archived)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	if err := s.db.InsertRecord(qry, t); err != nil {
-		errMsg := fmt.Sprintf("failed to insert template record in to db: %v", err)
-		s.logger.Error(errMsg)
-		return nil, fmt.Errorf(errMsg)
+		return nil, fmt.Errorf("failed to insert template record in to db: %v", err)
 	}
 
-	s.logger.Info(fmt.Sprintf("created new template record: %v", t))
+	log.Info(fmt.Sprintf("successfully created template record %s in database", t.Id))
 
 	return &t, nil
 }
 
 // UpdateTemplate is a concrete implementation of the UpdateTemplate method in the TemplateService interface
-func (s *templateService) UpdateTemplate(t *Template) error {
+func (s *templateService) UpdateTemplate(ctx context.Context, t *TemplateRecord) error {
+
+	// add telemetry fields to logger if exists in context
+	log := s.logger
+	if telemetry, ok := connect.GetTelemetryFromContext(ctx); ok && telemetry != nil {
+		log = log.With(telemetry.TelemetryFields()...)
+	} else {
+		s.logger.Warn("no telemetry found in context for UpdateTemplate")
+	}
 
 	// validate the template record
 	// redundant check, but good practice
@@ -366,18 +378,28 @@ func (s *templateService) UpdateTemplate(t *Template) error {
 				is_archived = ?
 			WHERE uuid = ?`
 	if err := s.db.UpdateRecord(qry, t.Name, t.Description, t.Cadence, t.Category, t.IsCalculated, t.IsArchived, t.Id); err != nil {
-		errMsg := fmt.Sprintf("failed to update template record in db: %v", err)
-		s.logger.Error(errMsg)
-		return fmt.Errorf(errMsg)
+		return fmt.Errorf("failed to update template record in db: %v", err)
 	}
 
-	s.logger.Info(fmt.Sprintf("successfully updated template record: %s", t.Id))
+	log.Info(fmt.Sprintf("successfully updated template record %s in database", t.Id))
 
 	return nil
 }
 
 // CreateAllowanceXref is a concrete implementation of the CreateAllowanceXref method in the TemplateService interface
-func (s *templateService) CreateAllowanceXref(t *Template, a *exotasks.Allowance) (*AllowanceTemplateXref, error) {
+func (s *templateService) CreateAllowanceXref(
+	ctx context.Context,
+	t *TemplateRecord,
+	a *allowances.Allowance,
+) (*AllowanceTemplateXref, error) {
+
+	log := s.logger
+	// add telemetry fields to logger if exists in context
+	if telemetry, ok := connect.GetTelemetryFromContext(ctx); ok && telemetry != nil {
+		log = log.With(telemetry.TelemetryFields()...)
+	} else {
+		log.Warn("no telemetry found in context for CreateAllowanceXref")
+	}
 
 	// create the new xref record
 	xref := AllowanceTemplateXref{
@@ -389,26 +411,30 @@ func (s *templateService) CreateAllowanceXref(t *Template, a *exotasks.Allowance
 	qry := `INSERT INTO template_allowance ( template_uuid, allowance_uuid, created_at)
 			VALUES (?, ?, ?)`
 	if err := s.db.InsertRecord(qry, xref); err != nil {
-		errMsg := fmt.Sprintf("failed to insert allowance-template xref record in to db: %v", err)
-		s.logger.Error(errMsg)
-		return nil, fmt.Errorf(errMsg)
+		return nil, fmt.Errorf("failed to insert allowance-template xref record in to db: %v", err)
 	}
 
-	s.logger.Info(fmt.Sprintf("successfully created xref record between allowance %s and template %s", a.Username, t.Name))
+	log.Info(fmt.Sprintf("successfully created xref record between allowance %s and template %s", a.Username, t.Name))
 
 	return &xref, nil
 }
 
 // DeleteAllowanceXref is a concrete implementation of the DeleteAllowanceXref method in the TemplateService interface
-func (s *templateService) DeleteAllowanceXref(t *Template, a *exotasks.Allowance) error {
+func (s *templateService) DeleteAllowanceXref(ctx context.Context, t *TemplateRecord, a *allowances.Allowance) error {
+
+	// add telemetry fields to logger if exists in context
+	log := s.logger
+	if telemetry, ok := connect.GetTelemetryFromContext(ctx); ok && telemetry != nil {
+		log = log.With(telemetry.TelemetryFields()...)
+	} else {
+		s.logger.Warn("no telemetry found in context for DeleteAllowanceXref")
+	}
 
 	// delete the xref record from the database
 	qry := `DELETE FROM template_allowance 
 			WHERE template_uuid = ? AND allowance_uuid = ?`
 	if err := s.db.DeleteRecord(qry, t.Id, a.Id); err != nil {
-		errMsg := fmt.Sprintf("failed to delete allowance-template xref record from db: %v", err)
-		s.logger.Error(errMsg)
-		return fmt.Errorf(errMsg)
+		return fmt.Errorf("failed to delete allowance-template xref record from db: %v", err)
 	}
 
 	s.logger.Info(fmt.Sprintf("successfully deleted xref record between allowance %s and template %s", a.Username, t.Name))
@@ -417,7 +443,15 @@ func (s *templateService) DeleteAllowanceXref(t *Template, a *exotasks.Allowance
 }
 
 // CreateTaskXref is a concrete implementation of the CreateTaskXref method in the TemplateService interface
-func (s *templateService) CreateTaskXref(t *Template, ta *tasks.Task) (*TemplateTaskXref, error) {
+func (s *templateService) CreateTaskXref(ctx context.Context, t *TemplateRecord, ta *tasks.TaskRecord) (*TemplateTaskXref, error) {
+
+	// add telemetry fields to logger if exists in context
+	log := s.logger
+	if telemetry, ok := connect.GetTelemetryFromContext(ctx); ok && telemetry != nil {
+		log = log.With(telemetry.TelemetryFields()...)
+	} else {
+		log.Warn("no telemetry found in context for CreateTaskXref")
+	}
 
 	// create the new xref record
 	xref := TemplateTaskXref{
@@ -429,12 +463,10 @@ func (s *templateService) CreateTaskXref(t *Template, ta *tasks.Task) (*Template
 	qry := `INSERT INTO template_task ( template_uuid, task_uuid, created_at)
 			VALUES (?, ?, ?)`
 	if err := s.db.InsertRecord(qry, xref); err != nil {
-		errMsg := fmt.Sprintf("failed to insert template-task xref record in to db: %v", err)
-		s.logger.Error(errMsg)
-		return nil, fmt.Errorf(errMsg)
+		return nil, fmt.Errorf("failed to insert template-task xref record in to db: %v", err)
 	}
 
-	s.logger.Info(fmt.Sprintf("successfully created xref record between template %s and task %s", t.Name, ta.Slug))
+	log.Info(fmt.Sprintf("successfully created xref record between template %s and task %s", t.Name, ta.Slug))
 
 	return &xref, nil
 }

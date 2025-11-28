@@ -1,7 +1,7 @@
 package remittance
 
 import (
-	"apprentice/internal/util"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"log/slog"
@@ -9,9 +9,11 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/tdeslauriers/apprentice/internal/util"
+	"github.com/tdeslauriers/shaw/pkg/user"
+
 	"github.com/tdeslauriers/carapace/pkg/connect"
 	"github.com/tdeslauriers/carapace/pkg/data"
-	"github.com/tdeslauriers/carapace/pkg/profile"
 	"github.com/tdeslauriers/carapace/pkg/session/provider"
 )
 
@@ -24,17 +26,16 @@ type Service interface {
 }
 
 // NewRemittanceService creates a new RemittanceService interface, returning a pointer to the concrete implementation
-func NewService(sql data.SqlRepository, i data.Indexer, c data.Cryptor, tkn provider.S2sTokenProvider, identity connect.S2sCaller) Service {
+func NewService(sql data.SqlRepository, i data.Indexer, c data.Cryptor, tkn provider.S2sTokenProvider, iam *connect.S2sCaller) Service {
 	return &service{
-		sql:      sql,
-		indexer:  i,
-		cryptor:  c,
-		tkn:      tkn,
-		identity: identity,
+		sql:     sql,
+		indexer: i,
+		cryptor: c,
+		tkn:     tkn,
+		iam:     iam,
 
 		logger: slog.Default().
-			With(slog.String(util.ServiceKey, util.ServiceApprentice)).
-			With(slog.String(util.PackageKey, util.PackageAllowances)).
+			With(slog.String(util.PackageKey, util.PackageRemittance)).
 			With(slog.String(util.ComponentKey, util.ComponentRemittance)),
 	}
 }
@@ -43,17 +44,26 @@ var _ Service = (*service)(nil)
 
 // service is the concrete implementation of the RemittanceService interface
 type service struct {
-	sql      data.SqlRepository
-	indexer  data.Indexer
-	cryptor  data.Cryptor
-	tkn      provider.S2sTokenProvider
-	identity connect.S2sCaller
+	sql     data.SqlRepository
+	indexer data.Indexer
+	cryptor data.Cryptor
+	tkn     provider.S2sTokenProvider
+	iam     *connect.S2sCaller
 
 	logger *slog.Logger
 }
 
 // Disburse is a concrete implementation of the Disburse method in the RemittanceService interface
 func (s *service) Disburse() {
+
+	// generate telemetry -> in this case just a trace parent for web calls
+	telemetry := &connect.Telemetry{
+		Traceparent: *connect.GenerateTraceParent(),
+	}
+	log := s.logger.With(telemetry.TelemetryFields()...)
+
+	// add telemetry to context for downstream calls
+	ctx := context.WithValue(context.Background(), connect.TelemetryKey, telemetry)
 
 	// will need jitter so that the services do not all run at the same time or disburse on top of each other
 	src := rand.NewSource(time.Now().UnixNano())
@@ -65,7 +75,7 @@ func (s *service) Disburse() {
 			// schedule weekly tasks for Saturday 12.01 AM CST
 			loc, err := time.LoadLocation("America/Chicago")
 			if err != nil {
-				s.logger.Error(fmt.Sprintf("failed to load location: %v", err))
+				log.Error("failed to load CST timezone", "err", err.Error())
 				continue
 			}
 
@@ -87,7 +97,7 @@ func (s *service) Disburse() {
 			randInterval := time.Duration(rng.Intn(60)-30) * time.Minute
 			next = next.Add(randInterval)
 
-			s.logger.Info(fmt.Sprintf("next scheduled disbursement at %s", next.Format(time.RFC3339)))
+			log.Info(fmt.Sprintf("next scheduled disbursement at %s", next.Format(time.RFC3339)))
 
 			duration := time.Until(next)
 			timer := time.NewTimer(duration)
@@ -117,12 +127,12 @@ func (s *service) Disburse() {
 						AND t.created_at > ? - INTERVAL 7 DAY + INTERVAL 1 HOUR` // accounts for task creation jitter
 			var records []RemittanceTask
 			if err := s.sql.SelectRecords(qry, &records, now.UTC(), now.UTC()); err != nil {
-				s.logger.Error(fmt.Sprintf("failed to select remittance tasks from db: %v", err))
+				log.Error("failed to select remittance tasks from db", "err", err.Error())
 				continue
 			}
 
 			if len(records) == 0 {
-				s.logger.Info("disbursement already completed for this week, skipping")
+				log.Info("disbursement already completed for this week, skipping")
 				continue
 			}
 
@@ -139,22 +149,28 @@ func (s *service) Disburse() {
 			// get allowance user records from identity service
 			// need birthdate to calculate the disbursement
 			// get service token
-			identityS2sToken, err := s.tkn.GetServiceToken(util.ServiceIdentity)
+			identityS2sToken, err := s.tkn.GetServiceToken(ctx, util.ServiceIdentity)
 			if err != nil {
 				s.logger.Error(fmt.Sprintf("/allowances post-handler failed to get service token: %s", err.Error()))
 				return
 			}
 
 			// get user info from identity service --> service endpoint --> /s2s/users/groups?scopes=r:apprentice:tasks:* w:apprentice:tasks:*
-			var users []profile.User
 			encoded := url.QueryEscape("r:apprentice:tasks:* w:apprentice:tasks:*")
-			if err := s.identity.GetServiceData(fmt.Sprintf("/s2s/users/groups?scopes=%s", encoded), identityS2sToken, "", &users); err != nil {
-				s.logger.Error(fmt.Sprintf("/templates/assignees handler failed to get tasks service users from identity service: %v", err))
-				return
+			users, err := connect.GetServiceData[[]user.User](
+				ctx,
+				s.iam,
+				fmt.Sprintf("/s2s/users/groups?scopes=%s", encoded),
+				identityS2sToken,
+				"",
+			)
+			if err != nil {
+				log.Error("failed to get users from identity service", "err", err.Error())
+				continue
 			}
 
 			// loop to map for easy lookup --> key is username, value is the user record
-			userMap := make(map[string]profile.User, len(users))
+			userMap := make(map[string]user.User, len(users))
 			for _, user := range users {
 				userMap[user.Username] = user
 			}
@@ -164,7 +180,7 @@ func (s *service) Disburse() {
 
 				// check if tasks length is 0
 				if len(tasks) < 1 {
-					s.logger.Error(fmt.Sprintf("no tasks found for allowance %s", allowance))
+					log.Warn(fmt.Sprintf("no tasks found for allowance %s, skipping disbursement", allowance))
 					continue // skip this allowance calculation
 				}
 
@@ -172,16 +188,17 @@ func (s *service) Disburse() {
 				// can be taken from the first task because the username is the same for all tasks
 				clearUsername, err := s.cryptor.DecryptServiceData(tasks[0].Username)
 				if err != nil {
-					s.logger.Error(fmt.Sprintf("failed to decrypt username for allowance %s: %v", allowance, err))
+					log.Error(fmt.Sprintf("failed to decrypt username for allowance %s", allowance),
+						"err", err.Error())
 					continue // skip this allowance and try the next one
 				}
-				username := string(clearUsername)
 
 				// parse birthday to get age
-				u := userMap[username]
+				u := userMap[string(clearUsername)]
 				dob, err := time.Parse("2006-01-02", u.BirthDate)
 				if err != nil {
-					s.logger.Error(fmt.Sprintf("failed to parse %s's birthdate for allowance %s: %v", username, allowance, err))
+					log.Error(fmt.Sprintf("failed to parse birthdate for allowance %s", allowance),
+						"err", err.Error())
 					continue // skip this allowance and try the next one
 				}
 
@@ -235,7 +252,8 @@ func (s *service) Disburse() {
 				// can be taken from the first task because the balance is the same for all tasks
 				clearBalance, err := s.cryptor.DecryptServiceData(tasks[0].Balance)
 				if err != nil {
-					s.logger.Error(fmt.Sprintf("failed to decrypt %s's balance for allowance %s: %v", username, allowance, err))
+					log.Error(fmt.Sprintf("failed to decrypt balance for allowance %s", allowance),
+						"err", err.Error())
 					continue // skip this allowance and try the next one
 				}
 				// convert decrypted balance to unsigned int64 --> balance is in cents
@@ -251,7 +269,8 @@ func (s *service) Disburse() {
 				// encrypt the new balance
 				encBalance, err := s.cryptor.EncryptServiceData(buf)
 				if err != nil {
-					s.logger.Error(fmt.Sprintf("failed to encrypt %s's updated balance for allowance %s: %v", username, allowance, err))
+					log.Error(fmt.Sprintf("failed to encrypt updated balance for allowance %s", allowance),
+						"err", err.Error())
 					continue // skip this allowance and try the next one
 				}
 
@@ -262,11 +281,15 @@ func (s *service) Disburse() {
 							updated_at = UTC_TIMESTAMP()
 						WHERE uuid = ?`
 				if err := s.sql.UpdateRecord(qry, encBalance, allowance); err != nil {
-					s.logger.Error(fmt.Sprintf("failed %s's balance for allowance %s in db: %v", username, allowance, err))
+					s.logger.Error(fmt.Sprintf("failed to update balance for allowance %s in db", allowance),
+						"err", err.Error())
 					continue // skip this allowance and try the next one
 				}
 
-				s.logger.Info(fmt.Sprintf("disbursed %d cents to %s's allowance %s", earned, username, allowance))
+				log.Info(fmt.Sprintf("disbursed %.2f to allowance %s", float64(earned)/100, allowance),
+					slog.String("previous_balance", fmt.Sprintf("%.2f", float64(balance-uint64(earned))/100)),
+					slog.String("new_balance", fmt.Sprintf("%.2f", float64(balance)/100)),
+				)
 			}
 		}
 	}()

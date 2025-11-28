@@ -1,12 +1,13 @@
 package permissions
 
 import (
-	"apprentice/internal/util"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
+
+	"github.com/tdeslauriers/apprentice/internal/util"
 
 	"github.com/tdeslauriers/carapace/pkg/connect"
 	"github.com/tdeslauriers/carapace/pkg/jwt"
@@ -21,9 +22,6 @@ type Handler interface {
 
 	// HandlePermissions handles HTTP requests for /permissions endpoint
 	HandlePermissions(w http.ResponseWriter, r *http.Request)
-
-	// HandlePermission handles HTTP requests for /permissions/{slug} endpoint
-	HandlePermission(w http.ResponseWriter, r *http.Request)
 }
 
 // NewHandler creates a new Handler interface, returning a pointer to the concrete implementation
@@ -34,7 +32,6 @@ func NewHandler(s Service, s2s, iam jwt.Verifier) Handler {
 		iam:     iam,
 
 		logger: slog.Default().
-			With(slog.String(util.ServiceKey, util.ServiceApprentice)).
 			With(slog.String(util.PackageKey, util.PackagePermissions)).
 			With(slog.String(util.ComponentKey, util.ComponentPermissions)),
 	}
@@ -55,45 +52,37 @@ type handler struct {
 // handles HTTP requests for the /permissions endpoint.
 func (h *handler) HandlePermissions(w http.ResponseWriter, r *http.Request) {
 
+	// get telemetry from request
+	tel := connect.ObtainTelemetry(r, h.logger)
+	log := h.logger.With(tel.TelemetryFields()...)
+
 	switch r.Method {
 	case http.MethodGet:
-		// Handle GET request for permissions\
-		h.getPermissions(w, r)
-		return
+
+		// get slug if exists
+		slug := r.PathValue("slug")
+		if slug != "" {
+
+			h.getPermissions(w, r, log)
+			return
+		} else {
+			// Handle GET request for a specific permission
+			h.getPermission(w, r, log)
+			return
+		}
 	case http.MethodPost:
 		// Handle POST request to create a new permission
-		h.createPermission(w, r)
+		h.createPermission(w, r, log)
 		return
-	default:
-		// Handle unsupported methods
-		e := connect.ErrorHttp{
-			StatusCode: http.StatusMethodNotAllowed,
-			Message:    "Method not allowed",
-		}
-		e.SendJsonErr(w)
-		return
-	}
-}
-
-// HandlePermission is the concrete implementation of the Handler method which
-// handles HTTP requests for the /permissions/{slug} endpoint.
-func (h *handler) HandlePermission(w http.ResponseWriter, r *http.Request) {
-
-	switch r.Method {
-	case http.MethodGet:
-		// Handle GET request for a specific permission
-		h.getPermission(w, r)
-		return
-	case http.MethodPost:
+	case http.MethodPut:
 		// Handle PUT (actually a post) request to update a specific permission
-		h.updatePermission(w, r)
+		h.updatePermission(w, r, log)
 		return
 	default:
-		// Handle unsupported methods
-		h.logger.Error(fmt.Sprintf("unsupported method %s for /permissions/{slug}", r.Method))
+		log.Error(fmt.Sprintf("unsupported method %s for endpoint %s", r.Method, r.URL.Path))
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusMethodNotAllowed,
-			Message:    "Method not allowed",
+			Message:    fmt.Sprintf("unsupported method %s for endpoint %s", r.Method, r.URL.Path),
 		}
 		e.SendJsonErr(w)
 		return
@@ -101,43 +90,49 @@ func (h *handler) HandlePermission(w http.ResponseWriter, r *http.Request) {
 }
 
 // getAllPermissions handles GET requests for the /permissions endpoint, returning all permissions from the permissions table.
-func (h *handler) getPermissions(w http.ResponseWriter, r *http.Request) {
+func (h *handler) getPermissions(w http.ResponseWriter, r *http.Request, log *slog.Logger) {
 
 	// validate the service token
 	s2sToken := r.Header.Get("Service-Authorization")
-	if _, err := h.s2s.BuildAuthorized(readPermissionsAllowed, s2sToken); err != nil {
-		h.logger.Error(fmt.Sprintf("/tasks handler failed to authorize s2s token: %v", err))
+	authedSvc, err := h.s2s.BuildAuthorized(readPermissionsAllowed, s2sToken)
+	if err != nil {
+		log.Error("failed to authorize service token", "err", err.Error())
 		connect.RespondAuthFailure(connect.S2s, err, w)
 		return
 	}
+	log = log.With("requesting_service", authedSvc.Claims.Subject)
 
 	// validate iam token
 	// need subject to determine fine grain permissions
 	iamToken := r.Header.Get("Authorization")
-	if _, err := h.iam.BuildAuthorized(readPermissionsAllowed, iamToken); err != nil {
-		h.logger.Error(fmt.Sprintf("/tasks handler failed to authorize iam token: %v", err))
+	authedUser, err := h.iam.BuildAuthorized(readPermissionsAllowed, iamToken)
+	if err != nil {
+		log.Error("failed to authorize iam token", "err", err.Error())
 		connect.RespondAuthFailure(connect.User, err, w)
 		return
 	}
+	log = log.With("actor", authedUser.Claims.Subject)
 
 	// scope check is enough, no need to get permissions for this endpoint at this time.
 
 	// get all permissions
 	_, permissions, err := h.service.GetAllPermissions()
 	if err != nil {
-		h.logger.Error(fmt.Sprintf("failed to get permissions: %v", err))
+		log.Error("failed to get permissions", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusInternalServerError,
-			Message:    "failed to get permissions",
+			Message:    err.Error(),
 		}
 		e.SendJsonErr(w)
 		return
 	}
 
+	log.Info(fmt.Sprintf("successfully retrieved %d permissions", len(permissions)))
+
 	// respond with permissions
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(permissions); err != nil {
-		h.logger.Error(fmt.Sprintf("failed to encode permissions: %v", err))
+		log.Error("failed to encode permissions", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusInternalServerError,
 			Message:    "failed to json encode permissions",
@@ -148,31 +143,36 @@ func (h *handler) getPermissions(w http.ResponseWriter, r *http.Request) {
 }
 
 // getPermission handles GET requests for the /permissions/{slug} endpoint, returning a specific permission.
-func (h *handler) getPermission(w http.ResponseWriter, r *http.Request) {
+func (h *handler) getPermission(w http.ResponseWriter, r *http.Request, log *slog.Logger) {
 
 	// validate the service token
 	s2sToken := r.Header.Get("Service-Authorization")
-	if _, err := h.s2s.BuildAuthorized(readPermissionsAllowed, s2sToken); err != nil {
-		h.logger.Error(fmt.Sprintf("/permissions handler failed to authorize s2s token: %v", err))
+	authedSvc, err := h.s2s.BuildAuthorized(readPermissionsAllowed, s2sToken)
+	if err != nil {
+		log.Error("failed to authorize service token", "err", err.Error())
 		connect.RespondAuthFailure(connect.S2s, err, w)
 		return
 	}
+	log = log.With("requesting_service", authedSvc.Claims.Subject)
 
 	// validate iam token
+	// need subject to determine fine grain permissions
 	iamToken := r.Header.Get("Authorization")
-	if _, err := h.iam.BuildAuthorized(readPermissionsAllowed, iamToken); err != nil {
-		h.logger.Error(fmt.Sprintf("/permissions handler failed to authorize iam token: %v", err))
+	authedUser, err := h.iam.BuildAuthorized(readPermissionsAllowed, iamToken)
+	if err != nil {
+		log.Error("failed to authorize iam token", "err", err.Error())
 		connect.RespondAuthFailure(connect.User, err, w)
 		return
 	}
+	log = log.With("actor", authedUser.Claims.Subject)
 
 	// extract slug from request URL
 	slug, err := connect.GetValidSlug(r)
 	if err != nil {
-		h.logger.Error(fmt.Sprintf("failed to get slug from request: %v", err))
+		log.Error("failed to get slug from request", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusBadRequest,
-			Message:    "invalid slug in request",
+			Message:    err.Error(),
 		}
 		e.SendJsonErr(w)
 		return
@@ -181,7 +181,7 @@ func (h *handler) getPermission(w http.ResponseWriter, r *http.Request) {
 	// get the permission by slug
 	p, err := h.service.GetPermissionBySlug(slug)
 	if err != nil {
-		h.logger.Error(fmt.Sprintf("failed to get permission by slug '%s': %v", slug, err))
+		log.Error("failed to get permission by slug", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusInternalServerError,
 			Message:    "failed to get permission",
@@ -190,9 +190,11 @@ func (h *handler) getPermission(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	log.Info(fmt.Sprintf("successfully retrieved permission %s", p.Name))
+
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(p); err != nil {
-		h.logger.Error(fmt.Sprintf("failed to encode permission: %v", err))
+		log.Error("failed to encode permission", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusInternalServerError,
 			Message:    "failed to json encode permission",
@@ -203,29 +205,32 @@ func (h *handler) getPermission(w http.ResponseWriter, r *http.Request) {
 }
 
 // createPermission handles POST requests for the /permissions endpoint, creating a new permission.
-func (h *handler) createPermission(w http.ResponseWriter, r *http.Request) {
+func (h *handler) createPermission(w http.ResponseWriter, r *http.Request, log *slog.Logger) {
 
 	// validate the service token
 	s2sToken := r.Header.Get("Service-Authorization")
-	if _, err := h.s2s.BuildAuthorized(writePermissionsAllowed, s2sToken); err != nil {
-		h.logger.Error(fmt.Sprintf("/permissions handler failed to authorize s2s token: %v", err))
+	authedSvc, err := h.s2s.BuildAuthorized(writePermissionsAllowed, s2sToken)
+	if err != nil {
+		log.Error("failed to authorize service token", "err", err.Error())
 		connect.RespondAuthFailure(connect.S2s, err, w)
 		return
 	}
+	log = log.With("requesting_service", authedSvc.Claims.Subject)
 
 	// validate iam token
 	iamToken := r.Header.Get("Authorization")
-	authorized, err := h.iam.BuildAuthorized(writePermissionsAllowed, iamToken)
+	authedUser, err := h.iam.BuildAuthorized(writePermissionsAllowed, iamToken)
 	if err != nil {
-		h.logger.Error(fmt.Sprintf("/permissions handler failed to authorize iam token: %v", err))
+		log.Error("failed to authorize iam token", "err", err.Error())
 		connect.RespondAuthFailure(connect.User, err, w)
 		return
 	}
+	log = log.With("actor", authedUser.Claims.Subject)
 
 	// parse the permission from the request body
 	var cmd exo.Permission
 	if err := json.NewDecoder(r.Body).Decode(&cmd); err != nil {
-		h.logger.Error(fmt.Sprintf("failed to decode permission: %v", err))
+		log.Error("failed to decode permission", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusBadRequest,
 			Message:    "failed to decode permission",
@@ -236,10 +241,10 @@ func (h *handler) createPermission(w http.ResponseWriter, r *http.Request) {
 
 	// validate the permission
 	if err := cmd.Validate(); err != nil {
-		h.logger.Error(fmt.Sprintf("invalid permission: %v", err))
+		log.Error("failed to validate permission", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusUnprocessableEntity,
-			Message:    fmt.Sprintf("invalid permission: %v", err),
+			Message:    err.Error(),
 		}
 		e.SendJsonErr(w)
 		return
@@ -247,11 +252,11 @@ func (h *handler) createPermission(w http.ResponseWriter, r *http.Request) {
 
 	// validate service name is correct
 	if strings.ToLower(strings.TrimSpace(cmd.ServiceName)) != util.ServiceApprentice {
-		errMsg := fmt.Sprintf("invalid service name '%s': must be %s", cmd.ServiceName, util.ServiceApprentice)
-		h.logger.Error(errMsg)
+		log.Error("failed to validate service name",
+			"err", fmt.Sprintf("invalid service must be %s", util.ServiceApprentice))
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusUnprocessableEntity,
-			Message:    errMsg,
+			Message:    fmt.Sprintf("invalid service must be %s", util.ServiceApprentice),
 		}
 		e.SendJsonErr(w)
 		return
@@ -269,22 +274,22 @@ func (h *handler) createPermission(w http.ResponseWriter, r *http.Request) {
 	// create the permission in persistence
 	permission, err := h.service.CreatePermission(p)
 	if err != nil {
-		h.logger.Error(fmt.Sprintf("failed to create permission: %v", err))
+		log.Error("failed to create permission", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusInternalServerError,
-			Message:    "failed to create permission",
+			Message:    err.Error(),
 		}
 		e.SendJsonErr(w)
 		return
 	}
 
 	// audit log
-	h.logger.Info(fmt.Sprintf("%s - %s created by %s", permission.Id, &permission.Name, authorized.Claims.Subject))
+	log.Info(fmt.Sprintf("successfully created permission: %s", permission.Name))
 
 	// respond with the created permission
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(permission); err != nil {
-		h.logger.Error(fmt.Sprintf("failed to encode permission: %v", err))
+		log.Error("failed to json encode permission", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusInternalServerError,
 			Message:    "failed to json encode permission",
@@ -296,32 +301,35 @@ func (h *handler) createPermission(w http.ResponseWriter, r *http.Request) {
 
 // updatePermission is a helper method that implementsthe functionality for
 // PUT requests for the /permissions/{slug} endpoint, updating an existing permission.
-func (h *handler) updatePermission(w http.ResponseWriter, r *http.Request) {
+func (h *handler) updatePermission(w http.ResponseWriter, r *http.Request, log *slog.Logger) {
 
 	// validate the service token
 	s2sToken := r.Header.Get("Service-Authorization")
-	if _, err := h.s2s.BuildAuthorized(writePermissionsAllowed, s2sToken); err != nil {
-		h.logger.Error(fmt.Sprintf("/permissions handler failed to authorize s2s token: %v", err))
+	authedSvc, err := h.s2s.BuildAuthorized(writePermissionsAllowed, s2sToken)
+	if err != nil {
+		log.Error("failed to authorize service token", "err", err.Error())
 		connect.RespondAuthFailure(connect.S2s, err, w)
 		return
 	}
+	log = log.With("requesting_service", authedSvc.Claims.Subject)
 
 	// validate iam token
 	iamToken := r.Header.Get("Authorization")
-	authorized, err := h.iam.BuildAuthorized(writePermissionsAllowed, iamToken)
+	authedUser, err := h.iam.BuildAuthorized(writePermissionsAllowed, iamToken)
 	if err != nil {
-		h.logger.Error(fmt.Sprintf("/permissions handler failed to authorize iam token: %v", err))
+		log.Error("failed to authorize iam token", "err", err.Error())
 		connect.RespondAuthFailure(connect.User, err, w)
 		return
 	}
+	log = log.With("actor", authedUser.Claims.Subject)
 
 	// extract slug from request URL
 	slug, err := connect.GetValidSlug(r)
 	if err != nil {
-		h.logger.Error(fmt.Sprintf("failed to get slug from request: %v", err))
+		log.Error("failed to get slug from request", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusBadRequest,
-			Message:    "invalid slug in request",
+			Message:    err.Error(),
 		}
 		e.SendJsonErr(w)
 		return
@@ -330,7 +338,7 @@ func (h *handler) updatePermission(w http.ResponseWriter, r *http.Request) {
 	// parse the permission from the request body
 	var cmd exo.PermissionRecord
 	if err := json.NewDecoder(r.Body).Decode(&cmd); err != nil {
-		h.logger.Error(fmt.Sprintf("failed to decode permission: %v", err))
+		log.Error("failed to decode permission", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusBadRequest,
 			Message:    "failed to decode permission",
@@ -341,10 +349,10 @@ func (h *handler) updatePermission(w http.ResponseWriter, r *http.Request) {
 
 	// validate the permission
 	if err := cmd.Validate(); err != nil {
-		h.logger.Error(fmt.Sprintf("invalid permission: %v", err))
+		log.Error("failed to validate permission", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusUnprocessableEntity,
-			Message:    fmt.Sprintf("invalid permission: %v", err),
+			Message:    err.Error(),
 		}
 		e.SendJsonErr(w)
 		return
@@ -353,10 +361,10 @@ func (h *handler) updatePermission(w http.ResponseWriter, r *http.Request) {
 	// get the existing permission by slug
 	p, err := h.service.GetPermissionBySlug(slug)
 	if err != nil {
-		h.logger.Error(fmt.Sprintf("failed to get permission by slug '%s': %v", slug, err))
+		log.Error("failed to get permission from slug in request", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusInternalServerError,
-			Message:    "failed to get permission from slug in request",
+			Message:    err.Error(),
 		}
 		e.SendJsonErr(w)
 		return
@@ -365,11 +373,10 @@ func (h *handler) updatePermission(w http.ResponseWriter, r *http.Request) {
 	// service field dropped for update, however, good to check it is correct
 	// since an incorrect value would indicate tampering
 	if strings.ToLower(strings.TrimSpace(cmd.ServiceName)) != util.ServiceApprentice {
-		errMsg := fmt.Sprintf("invalid service name '%s': must be %s", cmd.ServiceName, util.ServiceApprentice)
-		h.logger.Error(errMsg)
+		log.Error("failed to validate service name", "err", fmt.Sprintf("service name must be %s", util.ServiceApprentice))
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusUnprocessableEntity,
-			Message:    errMsg,
+			Message:    fmt.Sprintf("invalid service must be %s", util.ServiceApprentice),
 		}
 		e.SendJsonErr(w)
 		return
@@ -389,7 +396,7 @@ func (h *handler) updatePermission(w http.ResponseWriter, r *http.Request) {
 
 	// update the permission in persistence
 	if err := h.service.UpdatePermission(record); err != nil {
-		h.logger.Error(fmt.Sprintf("failed to update permission: %v", err))
+		log.Error("failed to update permission", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusInternalServerError,
 			Message:    "failed to update permission",
@@ -399,22 +406,34 @@ func (h *handler) updatePermission(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// audit log
+	var updatedFields []any
 	if p.Name != record.Name {
-		h.logger.Info(fmt.Sprintf("permission %s's name updated from %s to %s updated by %s", p.Id, p.Name, record.Name, authorized.Claims.Subject))
+		updatedFields = append(updatedFields,
+			slog.String("previous_name", record.Name),
+			slog.String("updated_name", p.Name))
 	}
 
 	if p.Description != record.Description {
-		h.logger.Info(fmt.Sprintf("permission %s's description updated from %s to %s updated by %s", p.Id, p.Description, record.Description, authorized.Claims.Subject))
+		updatedFields = append(updatedFields,
+			slog.String("previous_description", record.Description),
+			slog.String("updated_description", p.Description))
 	}
 
 	if p.Active != record.Active {
-		h.logger.Info(fmt.Sprintf("permission %s's active status updated from %t to %t updated by %s", p.Id, p.Active, record.Active, authorized.Claims.Subject))
+		updatedFields = append(updatedFields,
+			slog.Bool("previous_active", record.Active),
+			slog.Bool("updated_active", p.Active))
+	}
+
+	if len(updatedFields) > 0 {
+		log = log.With(updatedFields...)
+		log.Info(fmt.Sprintf("successfully updated permission %s", p.Slug))
 	}
 
 	// respond with the updated permission
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(record); err != nil {
-		h.logger.Error(fmt.Sprintf("failed to json encode updated permission: %v", err))
+		log.Error("failed to json encode updated permission", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusInternalServerError,
 			Message:    "failed to json encode updated permission",

@@ -1,10 +1,9 @@
 package templates
 
 import (
-	"apprentice/internal/util"
-	"apprentice/pkg/allowances"
-	"apprentice/pkg/tasks"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -12,32 +11,38 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/tdeslauriers/apprentice/internal/util"
+	"github.com/tdeslauriers/shaw/pkg/user"
+
+	"github.com/tdeslauriers/apprentice/pkg/allowances"
+	"github.com/tdeslauriers/apprentice/pkg/tasks"
 	"github.com/tdeslauriers/carapace/pkg/connect"
 	"github.com/tdeslauriers/carapace/pkg/jwt"
-	"github.com/tdeslauriers/carapace/pkg/profile"
 	"github.com/tdeslauriers/carapace/pkg/session/provider"
-	exotasks "github.com/tdeslauriers/carapace/pkg/tasks"
 )
 
+// endoint authorization scopes
 var readTemplatesAllowed = []string{"r:apprentice:templates:*"}
 var writeTemplatesAllowed = []string{"w:apprentice:templates:*"}
 
 // Handler is an interface to handle template endpoint functionality
 type Handler interface {
 
-	// HandleGetAssignees is a handler for the GET /templates/assignees endpoint,
-	// returning all users who may be assigned to tasks, ie the have the *:apprentice:task:* scope.
-	HandleGetAssignees(w http.ResponseWriter, r *http.Request)
-
 	// HandleGetTemplates is a handler for all requests to the /templates endpoint
 	HandleTemplates(w http.ResponseWriter, r *http.Request)
-
-	// HandlePostTemplate is a handler for the POST /templates/slug endpoint
-	HandleTemplate(w http.ResponseWriter, r *http.Request)
 }
 
 // NewHandler creates a new Handler interface, returning a pointer to the concrete implementation
-func NewHandler(s Service, a allowances.Service, t tasks.Service, s2s, iam jwt.Verifier, p provider.S2sTokenProvider, i connect.S2sCaller) Handler {
+func NewHandler(
+	s Service,
+	a allowances.Service,
+	t tasks.Service,
+	s2s jwt.Verifier,
+	iam jwt.Verifier,
+	p provider.S2sTokenProvider,
+	i *connect.S2sCaller,
+) Handler {
+
 	return &handler{
 		template:  s,
 		allowance: a,
@@ -48,7 +53,6 @@ func NewHandler(s Service, a allowances.Service, t tasks.Service, s2s, iam jwt.V
 		identity:  i,
 
 		logger: slog.Default().
-			With(slog.String(util.ServiceKey, util.ServiceApprentice)).
 			With(slog.String(util.PackageKey, util.PackageTemplates)).
 			With(slog.String(util.ComponentKey, util.ComponentTemplates)),
 	}
@@ -64,36 +68,82 @@ type handler struct {
 	s2s       jwt.Verifier
 	iam       jwt.Verifier
 	tkn       provider.S2sTokenProvider
-	identity  connect.S2sCaller
+	identity  *connect.S2sCaller
 
 	logger *slog.Logger
 }
 
-// HandleGetAssignees is a concrete impl of a handler for the GET /templates/assignees endpoint,
-// returning all users who may be assigned to tasks, ie the have the *:apprentice:task:* scope.
+// HandleTemplates is a concrete impl of a handler for all requests to the /templates endpoint
+func (h *handler) HandleTemplates(w http.ResponseWriter, r *http.Request) {
+
+	// get telemetry from request
+	tel := connect.ObtainTelemetry(r, h.logger)
+	log := h.logger.With(tel.TelemetryFields()...)
+
+	switch r.Method {
+	case http.MethodGet:
+
+		// get slug if it exists
+		slug := r.PathValue("slug")
+		switch slug {
+		case "":
+			h.getTemplates(w, r, tel, log)
+			return
+		case "assignees":
+			h.getAssignees(w, r, tel, log)
+			return
+		default:
+			h.getTemplate(w, r, tel, log)
+			return
+		}
+	case http.MethodPost:
+		h.createTemplate(w, r, tel, log)
+		return
+	case http.MethodPut:
+		h.updateTemplate(w, r, tel, log)
+		return
+	default:
+		log.Error(fmt.Sprintf("unsupported method %s for endpoint %s", r.Method, r.URL.Path))
+		e := connect.ErrorHttp{
+			StatusCode: http.StatusMethodNotAllowed,
+			Message:    fmt.Sprintf("unsupported method %s for endpoint %s", r.Method, r.URL.Path),
+		}
+		e.SendJsonErr(w)
+		return
+	}
+}
+
+// getAssignees returns all users who may be assigned to tasks, ie the have the *:apprentice:task:* scope.
 // it makes a call to the identity service to hydrate the list with user data.
-func (h *handler) HandleGetAssignees(w http.ResponseWriter, r *http.Request) {
+func (h *handler) getAssignees(w http.ResponseWriter, r *http.Request, tel *connect.Telemetry, log *slog.Logger) {
+
+	// add telemetry to context for downstream calls + service functions
+	ctx := context.WithValue(r.Context(), connect.TelemetryKey, tel)
 
 	// validate s2s token
 	svcToken := r.Header.Get("Service-Authorization")
-	if _, err := h.s2s.BuildAuthorized(readTemplatesAllowed, svcToken); err != nil {
-		h.logger.Error(fmt.Sprintf("/templates/assignees failed to authorize service token: %v", err))
+	authedSvc, err := h.s2s.BuildAuthorized(readTemplatesAllowed, svcToken)
+	if err != nil {
+		log.Error("failed to authorize service token", "err", err.Error())
 		connect.RespondAuthFailure(connect.S2s, err, w)
 		return
 	}
+	log = log.With("requesting_service", authedSvc.Claims.Subject)
 
 	// validate iam token
 	accessToken := r.Header.Get("Authorization")
-	if _, err := h.iam.BuildAuthorized(readTemplatesAllowed, accessToken); err != nil {
-		h.logger.Error(fmt.Sprintf("/allowances handler failed to authorize iam token: %s", err.Error()))
+	authedUser, err := h.iam.BuildAuthorized(readTemplatesAllowed, accessToken)
+	if err != nil {
+		log.Error("failed to authorize iam token", "err", err.Error())
 		connect.RespondAuthFailure(connect.User, err, w)
 		return
 	}
+	log = log.With("actor", authedUser.Claims.Subject)
 
 	// get identity service token
-	identityS2sToken, err := h.tkn.GetServiceToken(util.ServiceIdentity)
+	identityS2sToken, err := h.tkn.GetServiceToken(ctx, util.ServiceIdentity)
 	if err != nil {
-		h.logger.Error(fmt.Sprintf("/templates/assignees handler failed to get identity service token: %v", err))
+		log.Error("failed to get identity service token", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusInternalServerError,
 			Message:    "internal server error",
@@ -103,26 +153,34 @@ func (h *handler) HandleGetAssignees(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// call identity service to get all users with the <r/w>:apprentice:task:* scopes
-	var users []profile.User
 	encoded := url.QueryEscape("r:apprentice:tasks:* w:apprentice:tasks:*")
-	if err := h.identity.GetServiceData(fmt.Sprintf("/s2s/users/groups?scopes=%s", encoded), identityS2sToken, "", &users); err != nil {
-		h.logger.Error(fmt.Sprintf("/templates/assignees handler failed to get tasks service users from identity service: %v", err))
+	users, err := connect.GetServiceData[[]user.User](
+		ctx,
+		h.identity,
+		fmt.Sprintf("/s2s/users/groups?scopes=%s", encoded),
+		identityS2sToken,
+		"",
+	)
+	if err != nil {
+		log.Error("failed to get users from identity service", "err", err.Error())
 		h.identity.RespondUpstreamError(err, w)
 		return
 	}
 
+	// get allowance records from the database
 	allowances, err := h.allowance.GetAllowances()
 	if err != nil {
-		h.logger.Error(fmt.Sprintf("/templates/assignees handler failed to get allowances: %v", err))
+		log.Error("failed to get allowances from database", "err", err.Error())
 		h.allowance.HandleAllowanceError(w, err)
 		return
 	}
 
-	assignees := make([]exotasks.Assignee, 0, len(users))
+	// build assignees list by matching users to allowance records
+	assignees := make([]Assignee, 0, len(users))
 	for _, user := range users {
 		for _, allowance := range allowances {
 			if user.Username == allowance.Username {
-				assignees = append(assignees, exotasks.Assignee{
+				assignees = append(assignees, Assignee{
 					Username:      user.Username,
 					Firstname:     user.Firstname,
 					Lastname:      user.Lastname,
@@ -136,92 +194,56 @@ func (h *handler) HandleGetAssignees(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(assignees); err != nil {
-		h.logger.Error(fmt.Sprintf("/templates/assignees handler failed to json encode response: %v", err))
+		log.Error("failed to encode assignees to json", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusInternalServerError,
-			Message:    "failed to encode json response",
+			Message:    "failed to encode assignees to json",
 		}
 		e.SendJsonErr(w)
 		return
 	}
 }
 
-// HandleTemplates is a concrete impl of a handler for all requests to the /templates endpoint
-func (h *handler) HandleTemplates(w http.ResponseWriter, r *http.Request) {
-
-	switch r.Method {
-	case http.MethodGet:
-		h.handleGetTemplates(w, r)
-		return
-	case http.MethodPost:
-		h.handlePostTemplates(w, r)
-		return
-	default:
-		h.logger.Error(fmt.Sprintf("/templates handler received unsupported method: %s", r.Method))
-		e := connect.ErrorHttp{
-			StatusCode: http.StatusMethodNotAllowed,
-			Message:    "method not allowed",
-		}
-		e.SendJsonErr(w)
-		return
-	}
-}
-
-// HandleTemplate is a concrete impl of a handler  /template/slug endpoint
-func (h *handler) HandleTemplate(w http.ResponseWriter, r *http.Request) {
-
-	switch r.Method {
-	case http.MethodGet:
-		h.getTemplate(w, r)
-		return
-	case http.MethodPost:
-		h.postTemplate(w, r)
-		return
-	default:
-		h.logger.Error(fmt.Sprintf("/template/slug handler received unsupported method: %s", r.Method))
-		e := connect.ErrorHttp{
-			StatusCode: http.StatusMethodNotAllowed,
-			Message:    "method not allowed",
-		}
-		e.SendJsonErr(w)
-		return
-	}
-}
-
-// handleGetTemplates is a concrete impl of a handler for the GET /templates endpoint
-// it validates the incoming request, and then calls the template service to get all templates
+// getTemplates calls the template service to get all templates
 // Note: this may include calls to the identity service to hydrate the assignees records
-func (h *handler) handleGetTemplates(w http.ResponseWriter, r *http.Request) {
+func (h *handler) getTemplates(w http.ResponseWriter, r *http.Request, tel *connect.Telemetry, log *slog.Logger) {
+
+	// add telemetry to context for downstream calls + service functions
+	ctx := context.WithValue(r.Context(), connect.TelemetryKey, tel)
 
 	// validate s2s token
 	svcToken := r.Header.Get("Service-Authorization")
-	if _, err := h.s2s.BuildAuthorized(readTemplatesAllowed, svcToken); err != nil {
-		h.logger.Error(fmt.Sprintf("/templates handler failed to authorize service token: %v", err))
+	authedSvc, err := h.s2s.BuildAuthorized(readTemplatesAllowed, svcToken)
+	if err != nil {
+		log.Error("failed to authorize service token", "err", err.Error())
 		connect.RespondAuthFailure(connect.S2s, err, w)
 		return
 	}
+	log = log.With("requesting_service", authedSvc.Claims.Subject)
 
 	// validate iam token
 	accessToken := r.Header.Get("Authorization")
-	if _, err := h.iam.BuildAuthorized(readTemplatesAllowed, accessToken); err != nil {
-		h.logger.Error(fmt.Sprintf("/templates handler failed to authorize iam token: %v", err))
+	authedUser, err := h.iam.BuildAuthorized(readTemplatesAllowed, accessToken)
+	if err != nil {
+		log.Error("failed to authorize iam token", "err", err.Error())
 		connect.RespondAuthFailure(connect.User, err, w)
 		return
 	}
+	log = log.With("actor", authedUser.Claims.Subject)
 
 	// get all templates from the database
 	templates, err := h.template.GetTemplates()
 	if err != nil {
-		h.logger.Error(fmt.Sprintf("/templates handler failed to get templates: %v", err))
+		log.Error("failed to get templates from database", "err", err.Error())
 		h.template.HandleServiceError(w, err)
 		return
 	}
 
 	// get all assignees from the database
 	// get identity service token
-	identityS2sToken, err := h.tkn.GetServiceToken(util.ServiceIdentity)
+	identityS2sToken, err := h.tkn.GetServiceToken(ctx, util.ServiceIdentity)
 	if err != nil {
-		h.logger.Error(fmt.Sprintf("/templates/assignees handler failed to get identity service token: %v", err))
+		log.Error("failed to get identity service token", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusInternalServerError,
 			Message:    "internal server error",
@@ -231,17 +253,23 @@ func (h *handler) handleGetTemplates(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// call identity service to get all users with the <r/w>:apprentice:task:* scopes
-	var assignees []profile.User
 	encoded := url.QueryEscape("r:apprentice:tasks:* w:apprentice:tasks:*")
-	if err := h.identity.GetServiceData(fmt.Sprintf("/s2s/users/groups?scopes=%s", encoded), identityS2sToken, "", &assignees); err != nil {
-		h.logger.Error(fmt.Sprintf("/templates/assignees handler failed to get tasks service users from identity service: %v", err))
+	assignees, err := connect.GetServiceData[[]user.User](
+		ctx,
+		h.identity,
+		fmt.Sprintf("/s2s/users/groups?scopes=%s", encoded),
+		identityS2sToken,
+		"",
+	)
+	if err != nil {
+		log.Error("failed to get users from identity service", "err", err.Error())
 		h.identity.RespondUpstreamError(err, w)
 		return
 	}
 
 	// check that assignees were returned
 	if len(assignees) < 1 {
-		h.logger.Error(fmt.Sprintf("/templates/assignees handler failed to get assignees from identity service: %v", err))
+		log.Error("failed to get assignees from identity service")
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusInternalServerError,
 			Message:    "failed to get assignees from identity service",
@@ -250,7 +278,7 @@ func (h *handler) handleGetTemplates(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	assigneeMap := make(map[string]profile.User, len(assignees))
+	assigneeMap := make(map[string]user.User, len(assignees))
 	for _, a := range assignees {
 		assigneeMap[a.Username] = a
 	}
@@ -259,17 +287,17 @@ func (h *handler) handleGetTemplates(w http.ResponseWriter, r *http.Request) {
 	for i := range templates {
 		for j := range templates[i].Assignees {
 			if user, ok := assigneeMap[templates[i].Assignees[j].Username]; ok {
-				templates[i].Assignees[j] = exotasks.Assignee{
+				templates[i].Assignees[j] = Assignee{
 					Username:      templates[i].Assignees[j].Username,
 					Firstname:     user.Firstname,
 					Lastname:      user.Lastname,
 					AllowanceSlug: templates[i].Assignees[j].AllowanceSlug,
 				}
 			} else {
-				h.logger.Error(fmt.Sprintf("/templates handler failed to hydrate assignee: %s", templates[i].Assignees[j].Username))
+				log.Error(fmt.Sprintf("failed to hydrate assignee: %s", templates[i].Assignees[j].Username))
 				e := connect.ErrorHttp{
 					StatusCode: http.StatusInternalServerError,
-					Message:    "failed to hydrate assignee",
+					Message:    "failed to hydrate assignees",
 				}
 				e.SendJsonErr(w)
 				return
@@ -280,41 +308,46 @@ func (h *handler) handleGetTemplates(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(templates); err != nil {
-		h.logger.Error(fmt.Sprintf("/templates handler failed to encode response: %v", err))
+		log.Error("failed to encode templates to json", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusInternalServerError,
-			Message:    "failed to encode response",
+			Message:    "failed to encode templates to json",
 		}
 		e.SendJsonErr(w)
 		return
 	}
 }
 
-// handlePostTemplates is a concrete impl of a handler for the POST /templates endpoint
-// it validates the incoming request, and then calls the template service to create a new template
-func (h *handler) handlePostTemplates(w http.ResponseWriter, r *http.Request) {
+// createTemplate handles web requests to create a new template
+func (h *handler) createTemplate(w http.ResponseWriter, r *http.Request, tel *connect.Telemetry, log *slog.Logger) {
 
-	
+	// add telemetry to context for downstream calls + service functions
+	ctx := context.WithValue(r.Context(), connect.TelemetryKey, tel)
+
 	// validate s2s token
 	svcToken := r.Header.Get("Service-Authorization")
-	if _, err := h.s2s.BuildAuthorized(writeTemplatesAllowed, svcToken); err != nil {
-		h.logger.Error(fmt.Sprintf("/templates handler failed to authorize service token: %v", err))
+	authedSvc, err := h.s2s.BuildAuthorized(writeTemplatesAllowed, svcToken)
+	if err != nil {
+		log.Error("failed to authorize service token", "err", err.Error())
 		connect.RespondAuthFailure(connect.S2s, err, w)
 		return
 	}
+	log = log.With("requesting_service", authedSvc.Claims.Subject)
 
 	// validate iam token
 	accessToken := r.Header.Get("Authorization")
-	if _, err := h.iam.BuildAuthorized(writeTemplatesAllowed, accessToken); err != nil {
-		h.logger.Error(fmt.Sprintf("/templates handler failed to authorize iam token: %v", err))
+	authedUser, err := h.iam.BuildAuthorized(writeTemplatesAllowed, accessToken)
+	if err != nil {
+		log.Error("failed to authorize iam token", "err", err.Error())
 		connect.RespondAuthFailure(connect.User, err, w)
 		return
 	}
+	log = log.With("actor", authedUser.Claims.Subject)
 
 	// decode request body
-	var cmd exotasks.TemplateCmd
+	var cmd TemplateCmd
 	if err := json.NewDecoder(r.Body).Decode(&cmd); err != nil {
-		h.logger.Error(fmt.Sprintf("/templates handler failed to decode request body: %v", err))
+		log.Error("failed to decode request body", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusBadRequest,
 			Message:    "failed to decode request body",
@@ -325,7 +358,7 @@ func (h *handler) handlePostTemplates(w http.ResponseWriter, r *http.Request) {
 
 	// validate request body
 	if err := cmd.ValidateCmd(); err != nil {
-		h.logger.Error(fmt.Sprintf("/templates handler failed to validate request body: %v", err))
+		log.Error("failed to validate request body", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusUnprocessableEntity,
 			Message:    err.Error(),
@@ -337,25 +370,27 @@ func (h *handler) handlePostTemplates(w http.ResponseWriter, r *http.Request) {
 	// get assignees from database
 	existing, missing, err := h.allowance.GetValidUsers(cmd.Assignees)
 	if err != nil {
-		h.logger.Error(fmt.Sprintf("/templates handler failed to get valid assignees: %v", err))
+		log.Error("failed to get valid assignees", "err", err.Error())
 		h.allowance.HandleAllowanceError(w, err)
 		return
 	}
 
 	if len(missing) > 0 {
-		h.logger.Error(fmt.Sprintf("/templates handler found missing assignees: %v", missing))
+		log.Error("templates creating command includes assigness who do not have allowance records",
+			"err", fmt.Sprintf("invalid assignees: %s", strings.Join(missing, "; ")))
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusUnprocessableEntity,
-			Message:    "failed to generate task template due to invalid assignees: " + fmt.Sprintf("%v", strings.Join(missing, ", ")),
+			Message:    "invalid assignees",
 		}
 		e.SendJsonErr(w)
 		return
 	}
 
 	// create new template record in the database
-	template, err := h.template.CreateTemplate(cmd)
+	template, err := h.template.CreateTemplate(ctx, cmd)
 	if err != nil {
-		h.logger.Error(fmt.Sprintf("/templates handler failed to create new template: %v", err))
+
+		log.Error("failed to create new template record", "err", err.Error())
 		h.template.HandleServiceError(w, err)
 		return
 	}
@@ -369,12 +404,12 @@ func (h *handler) handlePostTemplates(w http.ResponseWriter, r *http.Request) {
 
 	for _, user := range existing {
 		wgXref.Add(1)
-		go func(u *exotasks.Allowance, t *Template, errXref chan error, wgXref *sync.WaitGroup) {
+		go func(u *allowances.Allowance, t *TemplateRecord, errXref chan error, wgXref *sync.WaitGroup) {
 
 			defer wgXref.Done()
 
 			// create the xref record between template and allowance
-			if _, err := h.template.CreateAllowanceXref(t, u); err != nil {
+			if _, err := h.template.CreateAllowanceXref(ctx, t, u); err != nil {
 				errXref <- fmt.Errorf("failed to create xref record for user %s and template %s: %v", u.Username, t.Name, err)
 				return
 			}
@@ -387,7 +422,7 @@ func (h *handler) handlePostTemplates(w http.ResponseWriter, r *http.Request) {
 			}
 
 			// create the xref record between task and template
-			if _, err = h.template.CreateTaskXref(t, task); err != nil {
+			if _, err = h.template.CreateTaskXref(ctx, t, task); err != nil {
 				errXref <- fmt.Errorf("failed to create xref record for task %s and template %s: %v", task.Id, t.Name, err)
 				return
 			}
@@ -405,30 +440,16 @@ func (h *handler) handlePostTemplates(w http.ResponseWriter, r *http.Request) {
 	close(errXref)
 
 	// check for errors in the xref creation
-	errCount := len(errXref)
-	if errCount > 0 {
-		var sb strings.Builder
-		counter := 0
-		for err := range errXref {
-			sb.WriteString(err.Error())
-			counter++
-			if counter < errCount {
-				sb.WriteString("; ")
-			}
+	if len(errXref) > 0 {
+		var errs []error
+		for e := range errXref {
+			errs = append(errs, e)
 		}
-		h.logger.Error(fmt.Sprintf("/templates handler failed to create xref records: %s", sb.String()))
-		e := connect.ErrorHttp{
-			StatusCode: http.StatusInternalServerError,
-			Message:    "failed to create xref records",
-		}
-		e.SendJsonErr(w)
-		return
+		log.Error("failed to create xref records for new template record", "errs", errors.Join(errs...))
 	}
 
-	h.logger.Info(fmt.Sprintf("/templates handler successfully created new template: %s", template.Name))
-
 	// prepare response object
-	response := exotasks.Template{
+	response := Template{
 		Id:           template.Id,
 		Name:         template.Name,
 		Description:  template.Description,
@@ -440,43 +461,52 @@ func (h *handler) handlePostTemplates(w http.ResponseWriter, r *http.Request) {
 		IsArchived:   template.IsArchived,
 	}
 
+	// audit log
+	h.logger.Info(fmt.Sprintf("successfully created new template: %s", template.Name))
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		h.logger.Error(fmt.Sprintf("/templates handler failed to encode response: %v", err))
+		log.Error("failed to encode createed template to json", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusInternalServerError,
-			Message:    "failed to encode response",
+			Message:    "failed to encode created template to json",
 		}
 		e.SendJsonErr(w)
 		return
 	}
-
 }
 
 // getTemplate is a concrete impl of a handler for the GET /template/slug endpoint
 // it validates the incoming request, and then calls the template service to get a single template
-func (h *handler) getTemplate(w http.ResponseWriter, r *http.Request) {
+func (h *handler) getTemplate(w http.ResponseWriter, r *http.Request, tel *connect.Telemetry, log *slog.Logger) {
+
+	// add telemetry to context for downstream calls + service functions
+	ctx := context.WithValue(r.Context(), connect.TelemetryKey, tel)
 
 	// validate s2s token
 	svcToken := r.Header.Get("Service-Authorization")
-	if _, err := h.s2s.BuildAuthorized(readTemplatesAllowed, svcToken); err != nil {
-		h.logger.Error(fmt.Sprintf("/template/slug handler failed to authorize service token: %v", err))
+	authedSvc, err := h.s2s.BuildAuthorized(readTemplatesAllowed, svcToken)
+	if err != nil {
+		log.Error("failed to authorize service token", "err", err.Error())
 		connect.RespondAuthFailure(connect.S2s, err, w)
 		return
 	}
+	log = log.With("requesting_service", authedSvc.Claims.Subject)
 
 	// validate iam token
 	accessToken := r.Header.Get("Authorization")
-	if _, err := h.iam.BuildAuthorized(readTemplatesAllowed, accessToken); err != nil {
-		h.logger.Error(fmt.Sprintf("/template/slug handler failed to authorize iam token: %v", err))
+	authedUser, err := h.iam.BuildAuthorized(readTemplatesAllowed, accessToken)
+	if err != nil {
+		log.Error("failed to authorize iam token", "err", err.Error())
 		connect.RespondAuthFailure(connect.User, err, w)
 		return
 	}
+	log = log.With("actor", authedUser.Claims.Subject)
 
 	slug, err := connect.GetValidSlug(r)
 	if err != nil {
-		h.logger.Error(fmt.Sprintf("/template/slug handler failed to get valid slug: %v", err))
+		log.Error("failed to get valid slug from request", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusBadRequest,
 			Message:    "failed to get valid slug",
@@ -488,16 +518,16 @@ func (h *handler) getTemplate(w http.ResponseWriter, r *http.Request) {
 	// get template from the database
 	template, err := h.template.GetTemplate(slug)
 	if err != nil {
-		h.logger.Error(fmt.Sprintf("/template/slug handler failed to get template: %v", err))
+		log.Error("failed to get template from database", "err", err.Error())
 		h.template.HandleServiceError(w, err)
 		return
 	}
 
 	// get all assignees from identity service
 	// get identity service token
-	identityS2sToken, err := h.tkn.GetServiceToken(util.ServiceIdentity)
+	identityS2sToken, err := h.tkn.GetServiceToken(ctx, util.ServiceIdentity)
 	if err != nil {
-		h.logger.Error(fmt.Sprintf("/template/slug handler failed to get identity service token: %v", err))
+		log.Error("failed to get identity service token", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusInternalServerError,
 			Message:    "internal server error",
@@ -507,20 +537,26 @@ func (h *handler) getTemplate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// call identity service to get all users with the <r/w>:apprentice:task:* scopes
-	var assignees []profile.User
 	encoded := url.QueryEscape("r:apprentice:tasks:* w:apprentice:tasks:*")
-	if err := h.identity.GetServiceData(fmt.Sprintf("/s2s/users/groups?scopes=%s", encoded), identityS2sToken, "", &assignees); err != nil {
-		h.logger.Error(fmt.Sprintf("/template/slug handler failed to get tasks service users from identity service: %v", err))
+	assignees, err := connect.GetServiceData[[]user.User](
+		ctx,
+		h.identity,
+		fmt.Sprintf("/s2s/users/groups?scopes=%s", encoded),
+		identityS2sToken,
+		"",
+	)
+	if err != nil {
+		log.Error("failed to get users from identity service", "err", err.Error())
 		h.identity.RespondUpstreamError(err, w)
 		return
 	}
 
 	// check that assignees were returned
 	if len(assignees) < 1 {
-		h.logger.Error(fmt.Sprintf("/template/slug handler failed to get assignees from identity service: %v", err))
+		log.Error("failed to get assignees from identity service", "err", "no assignees returned")
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusInternalServerError,
-			Message:    "failed to get assignees from identity service",
+			Message:    "no assignees returned from identity service",
 		}
 		e.SendJsonErr(w)
 		return
@@ -540,7 +576,7 @@ func (h *handler) getTemplate(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(template); err != nil {
-		h.logger.Error(fmt.Sprintf("/template/slug handler failed to encode response: %v", err))
+		log.Error("failed to encode template to json", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusInternalServerError,
 			Message:    "failed to json encode response",
@@ -550,30 +586,37 @@ func (h *handler) getTemplate(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// postTemplate is a concrete impl of a handler for the POST /template/slug endpoint
+// udpateTemplate is a concrete impl of a handler for the POST /template/slug endpoint
 // it validates the incoming request, and then calls the template service to update a template
-func (h *handler) postTemplate(w http.ResponseWriter, r *http.Request) {
+func (h *handler) updateTemplate(w http.ResponseWriter, r *http.Request, tel *connect.Telemetry, log *slog.Logger) {
+
+	// add telemetry to context for downstream calls + service functions
+	ctx := context.WithValue(r.Context(), connect.TelemetryKey, tel)
 
 	// validate s2s token
 	svcToken := r.Header.Get("Service-Authorization")
-	if _, err := h.s2s.BuildAuthorized(writeTemplatesAllowed, svcToken); err != nil {
-		h.logger.Error(fmt.Sprintf("/template/slug handler failed to authorize service token: %v", err))
+	authedSvc, err := h.s2s.BuildAuthorized(writeTemplatesAllowed, svcToken)
+	if err != nil {
+		log.Error("failed to authorize service token", "err", err.Error())
 		connect.RespondAuthFailure(connect.S2s, err, w)
 		return
 	}
+	log = log.With("requesting_service", authedSvc.Claims.Subject)
 
 	// validate iam token
 	accessToken := r.Header.Get("Authorization")
-	if _, err := h.iam.BuildAuthorized(writeTemplatesAllowed, accessToken); err != nil {
-		h.logger.Error(fmt.Sprintf("/template/slug handler failed to authorize iam token: %v", err))
+	authedUser, err := h.iam.BuildAuthorized(writeTemplatesAllowed, accessToken)
+	if err != nil {
+		log.Error("failed to authorize iam token", "err", err.Error())
 		connect.RespondAuthFailure(connect.User, err, w)
 		return
 	}
+	log = log.With("actor", authedUser.Claims.Subject)
 
 	// get slug from the request url
 	slug, err := connect.GetValidSlug(r)
 	if err != nil {
-		h.logger.Error(fmt.Sprintf("/template/slug handler failed to get valid slug: %v", err))
+		log.Error("failed to get valid slug from request", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusBadRequest,
 			Message:    "failed to get valid slug",
@@ -584,17 +627,17 @@ func (h *handler) postTemplate(w http.ResponseWriter, r *http.Request) {
 
 	// get existing record via slug lookup
 	// no reason to parse/decode request body if slug is not real value
-	template, err := h.template.GetTemplate(slug)
+	record, err := h.template.GetTemplate(slug)
 	if err != nil {
-		h.logger.Error(fmt.Sprintf("/template/slug handler failed to get template: %v", err))
+		log.Error("failed to get template from database", "err", err.Error())
 		h.template.HandleServiceError(w, err)
 		return
 	}
 
 	// decode request body
-	var cmd exotasks.TemplateCmd
+	var cmd TemplateCmd
 	if err := json.NewDecoder(r.Body).Decode(&cmd); err != nil {
-		h.logger.Error(fmt.Sprintf("/template/slug handler failed to decode request body: %v", err))
+		log.Error("failed to decode request body", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusBadRequest,
 			Message:    "failed to decode request body",
@@ -605,7 +648,7 @@ func (h *handler) postTemplate(w http.ResponseWriter, r *http.Request) {
 
 	// validate request body
 	if err := cmd.ValidateCmd(); err != nil {
-		h.logger.Error(fmt.Sprintf("/template/slug handler failed to validate request body: %v", err))
+		log.Error("failed to validate request body", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusUnprocessableEntity,
 			Message:    err.Error(),
@@ -616,7 +659,7 @@ func (h *handler) postTemplate(w http.ResponseWriter, r *http.Request) {
 
 	// validate cadence
 	if err := cmd.Cadence.IsValidCadence(); err != nil {
-		h.logger.Error(fmt.Sprintf("/template/slug handler failed to validate cadence: %v", err))
+		log.Error("failed to validate cadence", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusUnprocessableEntity,
 			Message:    err.Error(),
@@ -627,7 +670,7 @@ func (h *handler) postTemplate(w http.ResponseWriter, r *http.Request) {
 
 	// validate category
 	if err := cmd.Category.IsValidCategory(); err != nil {
-		h.logger.Error(fmt.Sprintf("/template/slug handler failed to validate category: %v", err))
+		log.Error("failed to validate category", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusUnprocessableEntity,
 			Message:    err.Error(),
@@ -640,31 +683,32 @@ func (h *handler) postTemplate(w http.ResponseWriter, r *http.Request) {
 	// ie, it checks if the emails submitted in the request body are valid and allowed
 	existing, missing, err := h.allowance.GetValidUsers(cmd.Assignees)
 	if err != nil {
-		h.logger.Error(fmt.Sprintf("/templates handler failed to get valid assignees: %v", err))
+		log.Error("failed to get assignees", "err", err.Error())
 		h.allowance.HandleAllowanceError(w, err)
 		return
 	}
 
 	if len(missing) > 0 {
-		h.logger.Error(fmt.Sprintf("/templates handler found missing assignees: %v", missing))
+		log.Error("templates update command includes assigness who do not have allowance records",
+			"err", fmt.Sprintf("invalid assignees: %s", strings.Join(missing, "; ")))
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusUnprocessableEntity,
-			Message:    "failed to update task template due to invalid assignees: " + fmt.Sprintf("%v", strings.Join(missing, ", ")),
+			Message:    "invalid assignees",
 		}
 		e.SendJsonErr(w)
 		return
 	}
 
 	// prepare the template for update\
-	updated := Template{
-		Id:           template.Id, // not allowed to update
+	updated := TemplateRecord{
+		Id:           record.Id, // not allowed to update
 		Name:         cmd.Name,
 		Description:  cmd.Description,
 		Cadence:      cmd.Cadence,
 		Category:     cmd.Category,
 		IsCalculated: cmd.IsCalculated,
-		Slug:         template.Slug,      // not allowed to update
-		CreatedAt:    template.CreatedAt, // not allowed to update
+		Slug:         record.Slug,      // not allowed to update
+		CreatedAt:    record.CreatedAt, // not allowed to update
 		IsArchived:   cmd.IsArchived,
 	}
 
@@ -672,12 +716,12 @@ func (h *handler) postTemplate(w http.ResponseWriter, r *http.Request) {
 	// if the template.Assignees not in 'existing', delete the xrefs
 	// if the 'existing' usernames not in template.Assignees, add the xrefs
 	var (
-		toDelete = make(map[string]bool, len(template.Assignees)) // key is username
-		toAdd    = make(map[string]bool, len(existing))           // key is allowance uuid
+		toDelete = make(map[string]bool, len(record.Assignees)) // key is username
+		toAdd    = make(map[string]bool, len(existing))         // key is allowance uuid
 	)
 
 	// loop for template_allowance records to remove
-	for _, assigned := range template.Assignees {
+	for _, assigned := range record.Assignees {
 		exists := false
 		for _, allowance := range existing {
 			if assigned.Username == allowance.Username {
@@ -693,7 +737,7 @@ func (h *handler) postTemplate(w http.ResponseWriter, r *http.Request) {
 	// loop for new assignees to add
 	for _, allowance := range existing {
 		exists := false
-		for _, assigned := range template.Assignees {
+		for _, assigned := range record.Assignees {
 			if assigned.Username == allowance.Username {
 				exists = true
 				break
@@ -712,9 +756,9 @@ func (h *handler) postTemplate(w http.ResponseWriter, r *http.Request) {
 
 	// update the template record
 	wgDb.Add(1)
-	go func(t *Template, errDb chan error, wgDb *sync.WaitGroup) {
+	go func(t *TemplateRecord, errDb chan error, wgDb *sync.WaitGroup) {
 		defer wgDb.Done()
-		if err := h.template.UpdateTemplate(t); err != nil {
+		if err := h.template.UpdateTemplate(ctx, t); err != nil {
 			errDb <- err
 			return
 		}
@@ -736,7 +780,7 @@ func (h *handler) postTemplate(w http.ResponseWriter, r *http.Request) {
 				}
 
 				// delete the xref record between template and allowance
-				if err := h.template.DeleteAllowanceXref(&updated, a); err != nil {
+				if err := h.template.DeleteAllowanceXref(ctx, &updated, a); err != nil {
 					errDb <- err
 					return
 				}
@@ -751,7 +795,7 @@ func (h *handler) postTemplate(w http.ResponseWriter, r *http.Request) {
 			go func(allowanceId string, errDb chan error, wgDb *sync.WaitGroup) {
 				defer wgDb.Done()
 
-				if _, err := h.template.CreateAllowanceXref(&updated, &exotasks.Allowance{Id: allowanceId}); err != nil {
+				if _, err := h.template.CreateAllowanceXref(ctx, &updated, &allowances.Allowance{Id: allowanceId}); err != nil {
 					errDb <- err
 					return
 				}
@@ -765,60 +809,75 @@ func (h *handler) postTemplate(w http.ResponseWriter, r *http.Request) {
 	close(errDb)
 
 	// check for errors in the database updates
-	errCount := len(errDb)
-	if errCount > 0 {
-		var sb strings.Builder
-		counter := 0
-		for err := range errDb {
-			sb.WriteString(err.Error())
-			if counter < errCount {
-				sb.WriteString("; ")
-			}
-			counter++
+	if len(errDb) > 0 {
+		var errs []error
+		for e := range errDb {
+			errs = append(errs, e)
 		}
-
-		h.logger.Error(fmt.Sprintf("/template/slug handler failed to update template in database: %s", sb.String()))
-		e := connect.ErrorHttp{
-			StatusCode: http.StatusInternalServerError,
-			Message:    "failed to update template",
-		}
-		e.SendJsonErr(w)
+		log.Error("failed to update template record", "errs", errors.Join(errs...))
+		h.template.HandleServiceError(w, errors.Join(errs...))
 		return
 	}
 
-	// log audit trail (template record only: xrefs are logged in service upon creation/deletion)
-	if template.Name != updated.Name {
-		h.logger.Info(fmt.Sprintf("/template/slug handler updated template name from %s to %s", template.Name, updated.Name))
+	// audit log
+	var changes []any
+	if record.Name != updated.Name {
+		changes = append(changes,
+			slog.String("previous_name", record.Name),
+			slog.String("updated_name", updated.Name),
+		)
 	}
 
-	if template.Description != updated.Description {
-		h.logger.Info(fmt.Sprintf("/template/slug handler updated template description from %s to %s", template.Description, updated.Description))
+	if record.Description != updated.Description {
+		changes = append(changes,
+			slog.String("previous_description", record.Description),
+			slog.String("updated_description", updated.Description),
+		)
 	}
 
-	if template.Cadence != updated.Cadence {
-		h.logger.Info(fmt.Sprintf("/template/slug handler updated template cadence from %s to %s", template.Cadence, updated.Cadence))
+	if record.Cadence != updated.Cadence {
+		changes = append(changes,
+			slog.String("previous_cadence", string(record.Cadence)),
+			slog.String("updated_cadence", string(updated.Cadence)),
+		)
 	}
 
-	if template.Category != updated.Category {
-		h.logger.Info(fmt.Sprintf("/template/slug handler updated template category from %s to %s", template.Category, updated.Category))
+	if record.Category != updated.Category {
+		changes = append(changes,
+			slog.String("previous_category", string(record.Category)),
+			slog.String("updated_category", string(updated.Category)),
+		)
 	}
 
-	if template.IsCalculated != updated.IsCalculated {
-		h.logger.Info(fmt.Sprintf("/template/slug handler updated template is_calculated from %t to %t", template.IsCalculated, updated.IsCalculated))
+	if record.IsCalculated != updated.IsCalculated {
+		changes = append(changes,
+			slog.Bool("previous_is_calculated", record.IsCalculated),
+			slog.Bool("updated_is_calculated", updated.IsCalculated),
+		)
 	}
 
-	if template.IsArchived != updated.IsArchived {
-		h.logger.Info(fmt.Sprintf("/template/slug handler updated template is_archived from %t to %t", template.IsArchived, updated.IsArchived))
+	if record.IsArchived != updated.IsArchived {
+		changes = append(changes,
+			slog.Bool("previous_is_archived", record.IsArchived),
+			slog.Bool("updated_is_archived", updated.IsArchived),
+		)
+	}
+
+	if len(changes) > 0 {
+		log = log.With(changes...)
+		log.Info(fmt.Sprintf("successfully updated template slug %s", slug))
+	} else {
+		log.Warn(fmt.Sprintf("executed update request for template slug %s but no changes were made", slug))
 	}
 
 	// return no content
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(updated); err != nil {
-		h.logger.Error(fmt.Sprintf("/template/slug handler failed to encode response: %v", err))
+		log.Error("failed to encode updaed template to json", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusInternalServerError,
-			Message:    "failed to encode response",
+			Message:    "failed to encode updated template to json",
 		}
 		e.SendJsonErr(w)
 		return

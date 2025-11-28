@@ -1,16 +1,17 @@
 package allowances
 
 import (
-	"apprentice/internal/util"
-	"apprentice/pkg/permissions"
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
 
+	"github.com/tdeslauriers/apprentice/internal/util"
+	"github.com/tdeslauriers/apprentice/pkg/permissions"
+	"github.com/tdeslauriers/carapace/pkg/connect"
 	"github.com/tdeslauriers/carapace/pkg/data"
 	exo "github.com/tdeslauriers/carapace/pkg/permissions"
-	"github.com/tdeslauriers/carapace/pkg/tasks"
 	"github.com/tdeslauriers/carapace/pkg/validate"
 )
 
@@ -25,7 +26,7 @@ type AllowancePermissionsService interface {
 	// UpdateAllowancePermissions updates the permissions for a given user/allowance account in the datebase
 	// It returns a map of added permissions, removed permissions, and an error if the update fails.
 	// Slugs are the slugs for the permission records.
-	UpdateAllowancePermissions(a *tasks.Allowance, slugs []string) (map[string]exo.PermissionRecord, map[string]exo.PermissionRecord, error)
+	UpdateAllowancePermissions(ctx context.Context, a *Allowance, slugs []string) (map[string]exo.PermissionRecord, map[string]exo.PermissionRecord, error)
 }
 
 // NewAllowancePermissionsService creates a new AllowancePermissionsService interface
@@ -36,7 +37,6 @@ func NewAllowancePermissionsService(sql data.SqlRepository, i data.Indexer, c da
 		permission: permissions.NewService(sql, i, c),
 
 		logger: slog.Default().
-			With(util.ServiceKey, util.ServiceApprentice).
 			With(util.PackageKey, util.PackageAllowances).
 			With(util.ComponentKey, util.ComponentAllowancesPermissionsService),
 	}
@@ -64,7 +64,17 @@ func (s *allowancePermissionsService) GetAllowancePermissions(username string) (
 // UpdateAllowancePermissions is the concrete implementation of the service method which
 // updates the permissions for a given user/allowance account in the database.
 // It returns a map of added permissions, removed permissions, and an error if the update fails
-func (s *allowancePermissionsService) UpdateAllowancePermissions(a *tasks.Allowance, slugs []string) (map[string]exo.PermissionRecord, map[string]exo.PermissionRecord, error) {
+func (s *allowancePermissionsService) UpdateAllowancePermissions(ctx context.Context, a *Allowance, slugs []string) (map[string]exo.PermissionRecord, map[string]exo.PermissionRecord, error) {
+
+	// create local log to hold telmetry from context
+	// get telemetry from context -> set up log
+	log := s.logger
+	telemetry, ok := ctx.Value(connect.TelemetryKey).(*connect.Telemetry)
+	if ok && telemetry != nil {
+		log = log.With(telemetry.TelemetryFields()...)
+	} else {
+		log.Warn("failed to retrieve telemetry from context for GetAccessToken")
+	}
 
 	if a == nil {
 		return nil, nil, fmt.Errorf("allowance account cannot be nil")
@@ -120,7 +130,7 @@ func (s *allowancePermissionsService) UpdateAllowancePermissions(a *tasks.Allowa
 
 	// return early if there are no permissions to add or remove
 	if len(toAdd) == 0 && len(toRemove) == 0 {
-		s.logger.Info(fmt.Sprintf("no changes to permissiosns for allowance account %s", a.Username))
+		log.Warn(fmt.Sprintf("no changes to permissiosns for allowance account %s", a.Username))
 		return nil, nil, nil
 	}
 
@@ -140,7 +150,7 @@ func (s *allowancePermissionsService) UpdateAllowancePermissions(a *tasks.Allowa
 					eCh <- fmt.Errorf("failed to add permission %s to allowance account %s: %v", permission.Slug, a.Username, err)
 				}
 
-				s.logger.Info(fmt.Sprintf("added permission '%s' to allowance account '%s'", permission.Name, a.Username))
+				log.Info(fmt.Sprintf("added permission '%s' to allowance account '%s'", permission.Name, a.Username))
 			}(pm, errCh, &wg)
 		}
 	}
@@ -156,7 +166,7 @@ func (s *allowancePermissionsService) UpdateAllowancePermissions(a *tasks.Allowa
 					eCh <- fmt.Errorf("failed to remove permission %s from allowance account %s: %v", permission.Slug, a.Username, err)
 				}
 
-				s.logger.Info(fmt.Sprintf("removed permission '%s' from allowance account '%s'", permission.Name, a.Username))
+				log.Info(fmt.Sprintf("removed permission '%s' from allowance account '%s'", permission.Name, a.Username))
 			}(pm, errCh, &wg)
 		}
 	}

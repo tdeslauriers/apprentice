@@ -102,7 +102,7 @@ func (s *allowancePermissionsService) GetAllowancePermissions(username string) (
 			return nil, nil, fmt.Errorf("failed to prepare permission %s: %v", p.Id, err)
 		}
 		ps[i] = *prepared
-		psMap[p.Name] = *prepared
+		psMap[prepared.Permission] = *prepared
 	}
 
 	// return the permissions

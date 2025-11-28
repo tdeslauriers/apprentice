@@ -1,12 +1,6 @@
 package manager
 
 import (
-	"apprentice/internal/util"
-	"apprentice/pkg/allowances"
-	"apprentice/pkg/permissions"
-	"apprentice/pkg/remittance"
-	"apprentice/pkg/tasks"
-	"apprentice/pkg/templates"
 	"crypto/tls"
 	"encoding/base64"
 	"fmt"
@@ -14,6 +8,12 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/tdeslauriers/apprentice/internal/util"
+	"github.com/tdeslauriers/apprentice/pkg/allowances"
+	"github.com/tdeslauriers/apprentice/pkg/permissions"
+	"github.com/tdeslauriers/apprentice/pkg/remittance"
+	"github.com/tdeslauriers/apprentice/pkg/tasks"
+	"github.com/tdeslauriers/apprentice/pkg/templates"
 	"github.com/tdeslauriers/carapace/pkg/config"
 	"github.com/tdeslauriers/carapace/pkg/connect"
 	"github.com/tdeslauriers/carapace/pkg/data"
@@ -167,7 +167,7 @@ type manager struct {
 	s2sTokenProvider provider.S2sTokenProvider
 	s2sVerifier      jwt.Verifier
 	iamVerifier      jwt.Verifier
-	identity         connect.S2sCaller
+	identity         *connect.S2sCaller
 	allowance        allowances.Service
 	remittance       remittance.Service
 	template         templates.Service
@@ -193,15 +193,12 @@ func (m *manager) Run() error {
 	// allowances
 	allowance := allowances.NewHandler(m.allowance, m.permissions, m.s2sVerifier, m.iamVerifier, m.s2sTokenProvider, m.identity)
 	mux.HandleFunc("/account", allowance.HandleAccount)
-	mux.HandleFunc("/allowances", allowance.HandleAllowances)
-	mux.HandleFunc("/allowances/", allowance.HandleAllowance)
+	mux.HandleFunc("/allowances/{slug...}", allowance.HandleAllowances)
 	mux.HandleFunc("/allowances/permissions", allowance.HandlePermissions)
 
 	// templates
 	template := templates.NewHandler(m.template, m.allowance, m.task, m.s2sVerifier, m.iamVerifier, m.s2sTokenProvider, m.identity)
-	mux.HandleFunc("/templates/assignees", template.HandleGetAssignees)
-	mux.HandleFunc("/templates", template.HandleTemplates)
-	mux.HandleFunc("/templates/", template.HandleTemplate)
+	mux.HandleFunc("/templates/{slug...}", template.HandleTemplates)
 
 	// tasks
 	task := tasks.NewHandler(m.task, m.allowance, m.permissions, m.s2sVerifier, m.iamVerifier, m.s2sTokenProvider, m.identity)
@@ -209,8 +206,7 @@ func (m *manager) Run() error {
 
 	// permissions
 	permission := permissions.NewHandler(m.permissions, m.s2sVerifier, m.iamVerifier)
-	mux.HandleFunc("/permissions", permission.HandlePermissions)
-	mux.HandleFunc("/permissions/", permission.HandlePermission)
+	mux.HandleFunc("/permissions/{slug...}", permission.HandlePermissions)
 
 	managerServer := &connect.TlsServer{
 		Addr:      m.config.ServicePort,

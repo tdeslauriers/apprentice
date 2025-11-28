@@ -3,27 +3,28 @@ package util
 const (
 	PackageKey = "package"
 
+	PackageAllowances  = "allowances"
 	PackageMain        = "main"
 	PackageManager     = "task manager"
+	PackagePermissions = "permissions"
+	PackageRemittance  = "remittance"
 	PackageTasks       = "tasks"
 	PackageTemplates   = "task templates"
-	PackageAllowances  = "allowances"
-	PackagePermissions = "permissions"
 
 	// component keys
 	ComponentKey = "component"
 
-	ComponentMain                         = "main"
-	ComponentManager                      = "manager"
-	ComponentAllowances                   = "allowances"
 	ComponentAllowanceAccount             = "allowance account"
-	ComponentTasks                        = "tasks"
-	ComponentTemplates                    = "task templates"
-	ComponentPermissions                  = "fine grain permissions"
-	ComponentScheduledTasks               = "scheduled tasks"
-	ComponentRemittance                   = "remittance"
 	ComponentAllownacePermisssionsHandler = "allowance permissions handler"
 	ComponentAllowancesPermissionsService = "allowance permissions service"
+	ComponentAllowances                   = "allowances"
+	ComponentMain                         = "main"
+	ComponentManager                      = "manager"
+	ComponentPermissions                  = "fine grain permissions"
+	ComponentRemittance                   = "remittance"
+	ComponentScheduledTasks               = "scheduled tasks"
+	ComponentTasks                        = "tasks"
+	ComponentTemplates                    = "task templates"
 
 	ServiceKey = "service"
 

@@ -2,9 +2,10 @@ package templates
 
 import (
 	"fmt"
+	"strings"
 
+	"github.com/tdeslauriers/apprentice/pkg/tasks"
 	"github.com/tdeslauriers/carapace/pkg/data"
-	"github.com/tdeslauriers/carapace/pkg/tasks"
 	"github.com/tdeslauriers/carapace/pkg/validate"
 )
 
@@ -30,8 +31,100 @@ type service struct {
 	TemplateErrorService
 }
 
-// Template is a struct that represents a template record in the database
+// TaskTemplate is a struct for a json model meant to update/insert task templates.
+// It is not a database model and is a subset of the db record fields.
+type TemplateCmd struct {
+	Csrf string `json:"csrf,omitempty"`
+
+	Name         string         `json:"name"`
+	Description  string         `json:"description"`
+	Cadence      tasks.Cadence  `json:"cadence"`
+	Category     tasks.Category `json:"category"`
+	IsCalculated bool           `json:"is_calculated"`
+	IsArchived   bool           `json:"is_archived"`
+
+	Assignees []string `json:"assignees"` // email addresses/usernames
+}
+
+// ValidateCmd validates the TemplateCmd struct
+// Note: it does not include any business logic validation, only data validation.
+func (t *TemplateCmd) ValidateCmd() error {
+
+	// csrf
+	if t.Csrf != "" {
+		if !validate.IsValidUuid(t.Csrf) {
+			return fmt.Errorf("invalid csrf token submitted with request")
+		}
+	}
+
+	// name
+	if len(strings.TrimSpace(t.Name)) < 2 || len(strings.TrimSpace(t.Name)) > 64 {
+		return fmt.Errorf("name is a required field and must be between 2 and 64 characters in length")
+	}
+
+	// description
+	if len(strings.TrimSpace(t.Description)) < 2 || len(strings.TrimSpace(t.Description)) > 255 {
+		return fmt.Errorf("description is a required field and must be between 2 and 255 characters in length")
+	}
+
+	// cadence
+	if len(t.Cadence) == 0 {
+		return fmt.Errorf("cadence is a required field")
+	}
+
+	if err := t.Cadence.IsValidCadence(); err != nil {
+		return err
+	}
+
+	// category
+	if len(t.Category) == 0 {
+		return fmt.Errorf("category is a required field")
+	}
+
+	if err := t.Category.IsValidCategory(); err != nil {
+		return err
+	}
+
+	// assignees
+	if len(t.Assignees) == 0 {
+		return fmt.Errorf("assignees is a required field")
+	}
+
+	for _, a := range t.Assignees {
+		if err := validate.IsValidEmail(a); err != nil {
+			return fmt.Errorf("invalid assignee: %v", err)
+		}
+	}
+
+	return nil
+}
+
+// Template is a struct that represents a task template as in json
+// not it includes a slice of assignees, which is not in the db model.
 type Template struct {
+	Id           string          `json:"id,omitempty"`
+	Name         string          `json:"name"`
+	Description  string          `json:"description"`
+	Cadence      tasks.Cadence   `json:"cadence"`
+	Category     tasks.Category  `json:"category"`
+	IsCalculated bool            `json:"is_calculated"`
+	Slug         string          `json:"slug,omitempty"`
+	CreatedAt    data.CustomTime `json:"created_at"`
+	IsArchived   bool            `json:"is_archived"`
+	Assignees    []Assignee      `json:"assignees"`
+}
+
+// Assignee is a model that is a composite of the profile.User model and the Allowance model.
+// It is used to represent a user that is assigned to a task template.
+type Assignee struct {
+	Username      string `json:"username,omitempty"`  // email address
+	Firstname     string `json:"firstname,omitempty"` // first name
+	Lastname      string `json:"lastname,omitempty"`  // last name
+	AllowanceSlug string `json:"allowance_slug"`      // allowance slug
+}
+
+// TemplateRecord is a struct that represents a template record in the database
+type TemplateRecord struct {
 	Id           string          `db:"uuid" json:"uuid,omitempty"`
 	Name         string          `db:"name" json:"name"`
 	Description  string          `db:"description" json:"description"`
@@ -44,7 +137,7 @@ type Template struct {
 }
 
 // Validate checks the template struct for valid values
-func (t *Template) Validate() error {
+func (t *TemplateRecord) Validate() error {
 
 	// uuid
 	if !validate.IsValidUuid(t.Id) {

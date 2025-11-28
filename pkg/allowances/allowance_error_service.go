@@ -1,10 +1,11 @@
 package allowances
 
 import (
-	"apprentice/internal/util"
 	"log/slog"
 	"net/http"
 	"strings"
+
+	"github.com/tdeslauriers/apprentice/internal/util"
 
 	"github.com/tdeslauriers/carapace/pkg/connect"
 )

@@ -1,19 +1,19 @@
 package allowances
 
 import (
-	"apprentice/internal/util"
-	"apprentice/pkg/permissions"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
 
+	"github.com/tdeslauriers/apprentice/internal/util"
+
+	"github.com/tdeslauriers/apprentice/pkg/permissions"
+
 	"github.com/tdeslauriers/carapace/pkg/connect"
 	"github.com/tdeslauriers/carapace/pkg/data"
 	"github.com/tdeslauriers/carapace/pkg/jwt"
-	exo "github.com/tdeslauriers/carapace/pkg/permissions"
-	"github.com/tdeslauriers/carapace/pkg/tasks"
 )
 
 // authorization
@@ -35,7 +35,6 @@ func NewAccountHandler(s Service, p permissions.Service, s2s, iam jwt.Verifier) 
 		iam:         iam,
 
 		logger: slog.Default().
-			With(slog.String(util.ServiceKey, util.ServiceApprentice)).
 			With(slog.String(util.PackageKey, util.PackageAllowances)).
 			With(slog.String(util.ComponentKey, util.ComponentAllowanceAccount)),
 	}
@@ -56,20 +55,23 @@ type accountHandler struct {
 // HandleAccount is a concrete implementation of the HandleAccount method in the AccountHandler interface
 func (h *accountHandler) HandleAccount(w http.ResponseWriter, r *http.Request) {
 
+	// get telemetry from request
+	tel := connect.ObtainTelemetry(r, h.logger)
+	log := h.logger.With(tel.TelemetryFields()...)
+
 	// check the method
 	switch r.Method {
 	case http.MethodGet:
-		h.handleGetAccount(w, r)
+		h.getAccount(w, r, log)
 		return
-	case http.MethodPost:
-		h.handleUpdateAccount(w, r)
+	case http.MethodPut:
+		h.updateAccount(w, r, log)
 		return
 	default:
-		errMsg := fmt.Sprintf("unsupported method %s for /allowance account", r.Method)
-		h.logger.Error(errMsg)
+		log.Error(fmt.Sprintf("unsupported method %s for endpoint %s", r.Method, r.URL.Path))
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusMethodNotAllowed,
-			Message:    errMsg,
+			Message:    fmt.Sprintf("unsupported method %s for endpoint %s", r.Method, r.URL.Path),
 		}
 		e.SendJsonErr(w)
 		return
@@ -77,72 +79,77 @@ func (h *accountHandler) HandleAccount(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleGetAccount is the concrete implementation of the method to retreive an allowance account
-func (h *accountHandler) handleGetAccount(w http.ResponseWriter, r *http.Request) {
+func (h *accountHandler) getAccount(w http.ResponseWriter, r *http.Request, log *slog.Logger) {
 
 	// validate s2s token
 	svcToken := r.Header.Get("Service-Authorization")
-	if _, err := h.s2s.BuildAuthorized(getAccountAllowed, svcToken); err != nil {
-		h.logger.Error(fmt.Sprintf("/allowance handler failed to authorize service token: %s", err.Error()))
+	authedSvc, err := h.s2s.BuildAuthorized(getAccountAllowed, svcToken)
+	if err != nil {
+		log.Error("failed to authorize service token", "err", err.Error())
 		connect.RespondAuthFailure(connect.S2s, err, w)
 		return
 	}
+	log = log.With("requesting_service", authedSvc.Claims.Subject)
 
 	// validate iam token
 	accessToken := r.Header.Get("Authorization")
-	jot, err := h.iam.BuildAuthorized(getAccountAllowed, accessToken)
+	authedUser, err := h.iam.BuildAuthorized(getAccountAllowed, accessToken)
 	if err != nil {
-		h.logger.Error(fmt.Sprintf("/allowance account handler failed to authorize iam token: %s", err.Error()))
+		log.Error("failed to authorize iam token", "err", err.Error())
 		connect.RespondAuthFailure(connect.User, err, w)
 		return
 	}
+	log = log.With("actor", authedUser.Claims.Subject)
 
-	// TODO: add remittee permissions check back when permission ui is implemented.
-	// get permissions
-	// pm, _, err := h.permissions.GetPermissions(jot.Claims.Subject)
-	// if err != nil {
-	// 	h.logger.Error(fmt.Sprintf("/allowance account handler failed to get permissions: %s", err.Error()))
-	// 	e := connect.ErrorHttp{
-	// 		StatusCode: http.StatusInternalServerError,
-	// 		Message:    "failed to get permissions",
-	// 	}
-	// 	e.SendJsonErr(w)
-	// 	return
-	// }
-
-	// // quick check of permissions
-	// _, isRemittee := pm[util.PermissionRemittee]
-
-	// if !isRemittee {
-	// 	errMsg := fmt.Sprintf("%s to view allowance account: %s", exo.UserForbidden, jot.Claims.Subject)
-	// 	h.logger.Error(errMsg)
-	// 	e := connect.ErrorHttp{
-	// 		StatusCode: http.StatusForbidden,
-	// 		Message:    errMsg,
-	// 	}
-	// 	e.SendJsonErr(w)
-	// 	return
-	// }
-
-	// get the remittee
-	a, err := h.service.GetByUser(jot.Claims.Subject)
+	// get user's permissions
+	pm, _, err := h.permissions.GetAllowancePermissions(authedUser.Claims.Subject)
 	if err != nil {
-		errMsg := fmt.Sprintf("/allowance account handler failed to get remittee: %s", err.Error())
-		h.logger.Error(errMsg)
+		log.Error("failed to get account user's permissions", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusInternalServerError,
-			Message:    errMsg,
+			Message:    err.Error(),
 		}
 		e.SendJsonErr(w)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(a); err != nil {
-		errMsg := fmt.Sprintf("/allowance account handler failed to encode remittee: %s", err.Error())
-		h.logger.Error(errMsg)
+	// check of permissions
+	_, isRemittee := pm[util.PermissionRemittee]
+	_, isPayroll := pm[util.PermissionPayroll]
+
+	// payroll can still only see their own account via this endpoint
+	if !isRemittee && !isPayroll {
+		log.Error("failed to get allowance account", "err", "user does not have correct permissions")
+		e := connect.ErrorHttp{
+			StatusCode: http.StatusForbidden,
+			Message:    "user does not have correct permissions",
+		}
+		e.SendJsonErr(w)
+		return
+	}
+
+	// get the remittee
+	a, err := h.service.GetByUser(authedUser.Claims.Subject)
+	if err != nil {
+		log.Error("failed to get allowance account for user",
+			"err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusInternalServerError,
-			Message:    errMsg,
+			Message:    err.Error(),
+		}
+		e.SendJsonErr(w)
+		return
+	}
+
+	log.Info("user successfully retrieved their allowance account")
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(a); err != nil {
+		log.Error("failed to json encode allowance account response",
+			"err", err.Error())
+		e := connect.ErrorHttp{
+			StatusCode: http.StatusInternalServerError,
+			Message:    "failed to json encode response",
 		}
 		e.SendJsonErr(w)
 		return
@@ -150,29 +157,32 @@ func (h *accountHandler) handleGetAccount(w http.ResponseWriter, r *http.Request
 }
 
 // handleUpdateAccount is the concrete implementation of the method to update a user's specfic account
-func (h *accountHandler) handleUpdateAccount(w http.ResponseWriter, r *http.Request) {
+func (h *accountHandler) updateAccount(w http.ResponseWriter, r *http.Request, log *slog.Logger) {
 
 	// validate s2s token
 	svcToken := r.Header.Get("Service-Authorization")
-	if _, err := h.s2s.BuildAuthorized(postAccountAllowed, svcToken); err != nil {
-		h.logger.Error(fmt.Sprintf("/allowance handler failed to authorize service token: %s", err.Error()))
+	authedSvc, err := h.s2s.BuildAuthorized(postAccountAllowed, svcToken)
+	if err != nil {
+		log.Error("failed to authorize service token", "err", err.Error())
 		connect.RespondAuthFailure(connect.S2s, err, w)
 		return
 	}
+	log = h.logger.With("requesting_service", authedSvc.Claims.Subject)
 
 	// validate iam token
 	accessToken := r.Header.Get("Authorization")
-	authorized, err := h.iam.BuildAuthorized(postAccountAllowed, accessToken)
+	authedUser, err := h.iam.BuildAuthorized(postAccountAllowed, accessToken)
 	if err != nil {
-		h.logger.Error(fmt.Sprintf("/allowance handler failed to authorize iam token: %s", err.Error()))
+		log.Error("failed to authorize iam token", "err", err.Error())
 		connect.RespondAuthFailure(connect.User, err, w)
 		return
 	}
+	log = log.With("actor", authedUser.Claims.Subject)
 
 	// decode request body
-	var cmd tasks.UpdateAllowanceCmd
+	var cmd UpdateAllowanceCmd
 	if err := json.NewDecoder(r.Body).Decode(&cmd); err != nil {
-		h.logger.Error(fmt.Sprintf("/allowance put-handler failed to decode request body: %s", err.Error()))
+		log.Error("failed to decode request body", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusBadRequest,
 			Message:    "failed to decode request body",
@@ -183,7 +193,7 @@ func (h *accountHandler) handleUpdateAccount(w http.ResponseWriter, r *http.Requ
 
 	// validate request body
 	if err := cmd.ValidateCmd(); err != nil {
-		h.logger.Error(fmt.Sprintf("/allowances/%s put-handler failed to validate request body:", err.Error()))
+		log.Error("failed to validate request body", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusUnprocessableEntity,
 			Message:    err.Error(),
@@ -195,10 +205,9 @@ func (h *accountHandler) handleUpdateAccount(w http.ResponseWriter, r *http.Requ
 	// NOTE: not using concurrency here because if permissions are wrong, error immediately
 	// and not fetch and decrypt the allowance account record
 	// get permissions
-	pm, _, err := h.permissions.GetAllowancePermissions(authorized.Claims.Subject)
+	pm, _, err := h.permissions.GetAllowancePermissions(authedUser.Claims.Subject)
 	if err != nil {
-		errMsg := fmt.Sprintf("/account update handler failed to get permissions for %s: %s", authorized.Claims.Subject, err.Error())
-		h.logger.Error(errMsg)
+		log.Error("failed to get account user's permissions", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusInternalServerError,
 			Message:    "failed to get permissions",
@@ -213,11 +222,10 @@ func (h *accountHandler) handleUpdateAccount(w http.ResponseWriter, r *http.Requ
 
 	// if the user is not a payroll or remittee, return forbidden
 	if !isPayroll && !isRemittee {
-		errMsg := fmt.Sprintf("%s to update allowance account: %s", exo.UserForbidden, authorized.Claims.Subject)
-		h.logger.Error(errMsg)
+		log.Error("failed to update allowance account", "err", "user does not have correct permissions")
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusForbidden,
-			Message:    errMsg,
+			Message:    "user does not have correct permissions",
 		}
 		e.SendJsonErr(w)
 		return
@@ -226,35 +234,33 @@ func (h *accountHandler) handleUpdateAccount(w http.ResponseWriter, r *http.Requ
 	// NOTE: at this time, remitees cannot update their own accounts at all
 	// this may change.
 	if !isPayroll {
-		errMsg := fmt.Sprintf("%s to update allowance account: %s", exo.UserForbidden, authorized.Claims.Subject)
-		h.logger.Error(errMsg)
+		log.Error("failed to update allowance account", "err", "user does not have correct permissions")
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusForbidden,
-			Message:    errMsg,
+			Message:    "user does not have correct permissions",
 		}
 		e.SendJsonErr(w)
 		return
 	}
 
 	// get allowance
-	allowance, err := h.service.GetByUser(authorized.Claims.Subject)
+	allowance, err := h.service.GetByUser(authedUser.Claims.Subject)
 	if err != nil {
-		errMsg := fmt.Sprintf("/account update handler failed to fetch %s's account: %s", authorized.Claims.Subject, err.Error())
-		h.logger.Error(errMsg)
+		log.Error("failed to get allowance account for user", "err", err.Error())
 		h.service.HandleAllowanceError(w, err)
 		return
 	}
 
 	// validate update values --> business logic
 	if err := h.service.ValidateUpdate(cmd, *allowance); err != nil {
-		h.logger.Error(fmt.Sprintf("failed to update %s's allowance account: %s", allowance.Username, err.Error()))
+		log.Error("failed to validate allowance account update business logic", "err", err.Error())
 		h.service.HandleAllowanceError(w, err)
 		return
 	}
 
 	// prepare updated allowance
 	// used as return object if update successful
-	updated := tasks.Allowance{
+	updated := Allowance{
 
 		Id:           allowance.Id,
 		Balance:      allowance.Balance + cmd.Credit - cmd.Debit,
@@ -269,39 +275,58 @@ func (h *accountHandler) handleUpdateAccount(w http.ResponseWriter, r *http.Requ
 
 	// update allowance account
 	if err := h.service.UpdateAllowance(&updated); err != nil {
+		log.Error("failed to update allowance account", "err", err.Error())
 		h.service.HandleAllowanceError(w, err)
 		return
 	}
 
 	// audit log
+	var updatedFields []any
 	if cmd.Credit > 0 {
-		h.logger.Info(fmt.Sprintf("%s's allowance account successfully credited $%.2f by %s", allowance.Username, float64(cmd.Credit)/float64(100), authorized.Claims.Subject))
+		updatedFields = append(updatedFields,
+			slog.String("previous_balance", fmt.Sprintf("%.2f", float64(allowance.Balance/100))),
+			slog.String("new_balance", fmt.Sprintf("%.2f", float64(updated.Balance/100))),
+			slog.String("change_type", "credit"),
+			slog.String("change_amount", fmt.Sprintf("%.2f", float64(cmd.Credit/100))))
 	}
 
 	if cmd.Debit > 0 {
-		h.logger.Info(fmt.Sprintf("%s's allowance account successfully debited $%.2f by %s", allowance.Username, float64(cmd.Debit)/float64(100), authorized.Claims.Subject))
+		updatedFields = append(updatedFields,
+			slog.String("previous_balance", fmt.Sprintf("%.2f", float64(allowance.Balance/100))),
+			slog.String("new_balance", fmt.Sprintf("%.2f", float64(updated.Balance/100))),
+			slog.String("change_type", "debit"),
+			slog.Float64("change_amount", float64(cmd.Debit/100)),
+		)
 	}
 
-	if updated.Balance != allowance.Balance {
-		h.logger.Info(fmt.Sprintf("%s's allowance account successfully updated by %s to new balance of $%.2f", allowance.Username, authorized.Claims.Subject, float64(updated.Balance)/float64(100)))
+	if cmd.IsArchived != allowance.IsArchived {
+		updatedFields = append(updatedFields,
+			slog.Bool("previous_is_archived", allowance.IsArchived),
+			slog.Bool("new_is_archived", updated.IsArchived),
+		)
 	}
 
-	if updated.IsArchived != allowance.IsArchived {
-		h.logger.Info(fmt.Sprintf("%s's allowance account archived status updated to '%t' by %s", allowance.Username, updated.IsArchived, authorized.Claims.Subject))
+	if cmd.IsActive != allowance.IsActive {
+		updatedFields = append(updatedFields,
+			slog.Bool("previous_is_active", allowance.IsActive),
+			slog.Bool("new_is_active", updated.IsActive),
+		)
 	}
 
-	if updated.IsActive != allowance.IsActive {
-		h.logger.Info(fmt.Sprintf("%s's allowance account active status updated to '%t' by %s", allowance.Username, updated.IsActive, authorized.Claims.Subject))
+	if cmd.IsCalculated != allowance.IsCalculated {
+		updatedFields = append(updatedFields,
+			slog.Bool("previous_is_calculated", allowance.IsCalculated),
+			slog.Bool("new_is_calculated", updated.IsCalculated),
+		)
 	}
 
-	if updated.IsCalculated != allowance.IsCalculated {
-		h.logger.Info(fmt.Sprintf("%s's allowance account calculated status updated to '%t' by %s", allowance.Username, updated.IsCalculated, authorized.Claims.Subject))
-	}
+	log = log.With(updatedFields...)
+	log.Info("user successfully updated their allowance account")
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(updated); err != nil {
-		h.logger.Error(fmt.Sprintf("/allowances/%s post-handler failed to json encode response: ", err.Error()))
+		log.Error("failed to json encode response", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusInternalServerError,
 			Message:    "failed to json encode response",

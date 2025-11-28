@@ -1,25 +1,25 @@
 package tasks
 
 import (
-	"apprentice/internal/util"
-	"apprentice/pkg/allowances"
-	"apprentice/pkg/permissions"
+	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"net/url"
-	"strings"
 	"sync"
 	"time"
 
+	"github.com/tdeslauriers/apprentice/internal/util"
+	"github.com/tdeslauriers/apprentice/pkg/allowances"
+	"github.com/tdeslauriers/apprentice/pkg/permissions"
 	"github.com/tdeslauriers/carapace/pkg/connect"
 	"github.com/tdeslauriers/carapace/pkg/jwt"
 	exo "github.com/tdeslauriers/carapace/pkg/permissions"
-	"github.com/tdeslauriers/carapace/pkg/profile"
 	"github.com/tdeslauriers/carapace/pkg/session/provider"
-	"github.com/tdeslauriers/carapace/pkg/tasks"
+	"github.com/tdeslauriers/shaw/pkg/user"
 )
 
 var readTasksAllowed = []string{"r:apprentice:*", "r:apprentice:tasks:*"}
@@ -33,7 +33,16 @@ type Handler interface {
 }
 
 // NewHandler creates a new Handler interface, returning a pointer to the concrete implementation
-func NewHandler(s Service, a allowances.Service, p permissions.Service, s2s, iam jwt.Verifier, tkn provider.S2sTokenProvider, c connect.S2sCaller) Handler {
+func NewHandler(
+	s Service,
+	a allowances.Service,
+	p permissions.Service,
+	s2s jwt.Verifier,
+	iam jwt.Verifier,
+	tkn provider.S2sTokenProvider,
+	c *connect.S2sCaller,
+) Handler {
+
 	return &handler{
 		svc:         s,
 		allowance:   a,
@@ -44,7 +53,6 @@ func NewHandler(s Service, a allowances.Service, p permissions.Service, s2s, iam
 		identity:    c,
 
 		logger: slog.Default().
-			With(slog.String(util.ServiceKey, util.ServiceApprentice)).
 			With(slog.String(util.PackageKey, util.PackageTasks)).
 			With(slog.String(util.ComponentKey, util.ComponentTasks)),
 	}
@@ -60,7 +68,7 @@ type handler struct {
 	s2s         jwt.Verifier
 	iam         jwt.Verifier
 	tkn         provider.S2sTokenProvider
-	identity    connect.S2sCaller
+	identity    *connect.S2sCaller
 
 	logger *slog.Logger
 }
@@ -68,53 +76,63 @@ type handler struct {
 // HandleTasks is a concrete implementation of the HandleTasks method in the Handler interface
 func (h *handler) HandleTasks(w http.ResponseWriter, r *http.Request) {
 
+	// get telemetry from request
+	tel := connect.ObtainTelemetry(r, h.logger)
+	log := h.logger.With(tel.TelemetryFields()...)
+
 	switch r.Method {
 	case http.MethodGet:
-		h.handleGetTasks(w, r)
+		h.getTasks(w, r, tel, log)
 		return
-	case http.MethodPost:
-		h.handlePostTasks(w, r)
+	case http.MethodPatch:
+		h.updateTaskStatus(w, r, log)
 		return
 	default:
-		h.logger.Error("only GET and POST method is allowed to /tasks")
+		log.Error(fmt.Sprintf("unsupported method %s for endpoint %s", r.Method, r.URL.Path))
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusMethodNotAllowed,
-			Message:    "only GET and POST method is allowed to /tasks",
+			Message:    fmt.Sprintf("unsupported method %s for endpoint %s", r.Method, r.URL.Path),
 		}
 		e.SendJsonErr(w)
 		return
 	}
 }
 
-// handleGetTasks is a concrete implementation of the HandleTasks GET functionality.
+// getTasks is a concrete implementation of the HandleTasks GET functionality.
 // It handles query params and returns a list of tasks.   In addition to jwt authorization,
 // it also checks the fine grain permissions for the user.
-func (h *handler) handleGetTasks(w http.ResponseWriter, r *http.Request) {
+func (h *handler) getTasks(w http.ResponseWriter, r *http.Request, tel *connect.Telemetry, log *slog.Logger) {
+
+	// add telemetry to context for downstream calls + service functions
+	ctx := context.WithValue(r.Context(), connect.TelemetryKey, tel)
 
 	// validate s2s token
 	svcToken := r.Header.Get("Service-Authorization")
-	if _, err := h.s2s.BuildAuthorized(readTasksAllowed, svcToken); err != nil {
-		h.logger.Error(fmt.Sprintf("/tasks handler failed to authorize s2s token: %v", err))
+	authedSvc, err := h.s2s.BuildAuthorized(readTasksAllowed, svcToken)
+	if err != nil {
+		log.Error("failed to authorize s2s token", "err", err.Error())
 		connect.RespondAuthFailure(connect.S2s, err, w)
 		return
 	}
+	log = log.With("requesting_service", authedSvc.Claims.Subject)
 
 	// validate iam token
 	// need subject to determine fine grain permissions
 	iamToken := r.Header.Get("Authorization")
-	authorized, err := h.iam.BuildAuthorized(readTasksAllowed, iamToken)
+	authedUser, err := h.iam.BuildAuthorized(readTasksAllowed, iamToken)
 	if err != nil {
-		h.logger.Error(fmt.Sprintf("/tasks handler failed to authorize iam token: %v", err))
+		log.Error("failed to authorize iam token", "err", err.Error())
 		connect.RespondAuthFailure(connect.User, err, w)
 		return
 	}
+	log = log.With("actor", authedUser.Claims.Subject)
 
 	// get query params
 	params := r.URL.Query()
 	if len(params) > 0 {
 		// validate query params
-		if err := tasks.ValidateQueryParams(params); err != nil {
-			h.logger.Error(fmt.Sprintf("/tasks handler failed to validate query params: %v", err))
+		if err := ValidateQueryParams(params); err != nil {
+			log.Error("invalid query params", "err", err.Error())
 			e := connect.ErrorHttp{
 				StatusCode: http.StatusUnprocessableEntity,
 				Message:    fmt.Sprintf("invalid query params: %v", err),
@@ -125,9 +143,9 @@ func (h *handler) handleGetTasks(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// get fine grain permissions map for query building
-	ps, _, err := h.permissions.GetAllowancePermissions(authorized.Claims.Subject)
+	ps, _, err := h.permissions.GetAllowancePermissions(authedUser.Claims.Subject)
 	if err != nil {
-		h.logger.Error(fmt.Sprintf("/tasks handler failed to get %s's permissions: %v", authorized.Claims.Subject, err))
+		log.Error("failed to get user's permissions", "err", err.Error())
 		// this is not a 401 or 403, just fetching.  Permission correctness (if applicable) is checked below
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusInternalServerError,
@@ -141,10 +159,11 @@ func (h *handler) handleGetTasks(w http.ResponseWriter, r *http.Request) {
 	// all allowance users can query "me", but additional permissions are needed for everything else.
 	if params.Has("assignee") && params.Get("assignee") != "me" {
 		if _, ok := ps[util.PermissionPayroll]; !ok {
-			h.logger.Error(fmt.Sprintf("user %s does not have permission to get assignees=%s", authorized.Claims.Subject, params.Get("assignee")))
+			log.Error("failed to get assignees",
+				"err", "user does not have correct permissions to get these assignees")
 			e := connect.ErrorHttp{
 				StatusCode: http.StatusForbidden,
-				Message:    fmt.Sprintf("%s to get assignees=%s: %s", exo.UserForbidden, params.Get("assignee"), authorized.Claims.Subject),
+				Message:    "user does not have correct permissions to get these assignees",
 			}
 			e.SendJsonErr(w)
 			return
@@ -152,18 +171,18 @@ func (h *handler) handleGetTasks(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// sebd params and permissions to task service for user in query building
-	records, err := h.svc.GetTasks(authorized.Claims.Subject, params, ps)
+	records, err := h.svc.GetTasks(authedUser.Claims.Subject, params, ps)
 	if err != nil {
-		h.logger.Error(fmt.Sprintf("/tasks handler failed to get tasks: %v", err))
+		log.Error("failed to get tasks", "err", err.Error())
 		h.svc.HandleServiceError(w, err)
 		return
 	}
 
 	// get all assignees from the database to hiydrate the task list
 	// get identity service token
-	identityS2sToken, err := h.tkn.GetServiceToken(util.ServiceIdentity)
+	identityS2sToken, err := h.tkn.GetServiceToken(ctx, util.ServiceIdentity)
 	if err != nil {
-		h.logger.Error(fmt.Sprintf("/tasks handler failed to get identity service token: %v", err))
+		log.Error("failed to get identity service s2s token", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusInternalServerError,
 			Message:    "internal server error",
@@ -173,36 +192,42 @@ func (h *handler) handleGetTasks(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// call identity service to get all users with the <r/w>:apprentice:task:* scopes
-	var assignees []profile.User
 	encoded := url.QueryEscape("r:apprentice:tasks:* w:apprentice:tasks:*")
-	if err := h.identity.GetServiceData(fmt.Sprintf("/s2s/users/groups?scopes=%s", encoded), identityS2sToken, "", &assignees); err != nil {
-		h.logger.Error(fmt.Sprintf("/templates/assignees handler failed to get tasks service users from identity service: %v", err))
+	assignees, err := connect.GetServiceData[[]user.User](
+		ctx,
+		h.identity,
+		fmt.Sprintf("/s2s/users/groups?scopes=%s", encoded),
+		identityS2sToken,
+		"",
+	)
+	if err != nil {
+		log.Error("failed to get users from identity service", "err", err.Error())
 		h.identity.RespondUpstreamError(err, w)
 		return
 	}
 
 	// make assignee map for lookup
-	assigneeMap := make(map[string]profile.User, len(assignees))
+	assigneeMap := make(map[string]user.User, len(assignees))
 	for _, a := range assignees {
 		assigneeMap[a.Username] = a
 	}
 
 	// prepare task records to return
-	ts := make([]tasks.Task, len(records))
+	tasks := make([]Task, len(records))
 	for i, r := range records {
 
 		// make sure assignee exists in the map
 		if _, ok := assigneeMap[r.Username]; !ok {
-			h.logger.Error(fmt.Sprintf("/tasks handler failed to find assignee %s in map", r.Username))
+			log.Error("failed to find assignee in allowance users")
 			e := connect.ErrorHttp{
 				StatusCode: http.StatusInternalServerError,
-				Message:    fmt.Sprintf("failed to find assignee %s in allowance users", r.Username),
+				Message:    "failed to find assignee %s in allowance users",
 			}
 			e.SendJsonErr(w)
 			return
 		}
 
-		ts[i] = tasks.Task{
+		tasks[i] = Task{
 			Id:             r.Id,
 			Name:           r.Name,
 			Description:    r.Description,
@@ -223,46 +248,49 @@ func (h *handler) handleGetTasks(w http.ResponseWriter, r *http.Request) {
 	// send response
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	if err := json.NewEncoder(w).Encode(ts); err != nil {
-		h.logger.Error(fmt.Sprintf("/tasks handler failed to send json response: %v", err))
+	if err := json.NewEncoder(w).Encode(tasks); err != nil {
+		log.Error("failed to json encode response", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusInternalServerError,
-			Message:    "internal server error",
+			Message:    "failed to json encode response",
 		}
 		e.SendJsonErr(w)
 		return
 	}
 }
 
-// handlePostTasks is a concrete implementation of the HandleTasks POST functionality.
+// updateTaskStatus is a concrete implementation of the HandleTasks POST functionality.
 // It handles updating a task record status.
-func (h *handler) handlePostTasks(w http.ResponseWriter, r *http.Request) {
+func (h *handler) updateTaskStatus(w http.ResponseWriter, r *http.Request, log *slog.Logger) {
 
 	// validate s2s token
 	svcToken := r.Header.Get("Service-Authorization")
-	if _, err := h.s2s.BuildAuthorized(writeTasksAllowed, svcToken); err != nil {
-		h.logger.Error(fmt.Sprintf("/tasks handler failed to authorize s2s token: %v", err))
+	authedSvc, err := h.s2s.BuildAuthorized(writeTasksAllowed, svcToken)
+	if err != nil {
+		log.Error("failed to authorize s2s token", "err", err.Error())
 		connect.RespondAuthFailure(connect.S2s, err, w)
 		return
 	}
+	log = log.With("requesting_service", authedSvc.Claims.Subject)
 
 	// validate iam token
 	// need the princpal to determine fine grain permissions
 	iamToken := r.Header.Get("Authorization")
-	jot, err := h.iam.BuildAuthorized(writeTasksAllowed, iamToken)
+	authedUser, err := h.iam.BuildAuthorized(writeTasksAllowed, iamToken)
 	if err != nil {
-		h.logger.Error(fmt.Sprintf("/tasks handler failed to authorize iam token: %v", err))
+		log.Error("failed to authorize iam token", "err", err.Error())
 		connect.RespondAuthFailure(connect.User, err, w)
 		return
 	}
+	log = log.With("actor", authedUser.Claims.Subject)
 
 	// decode request body
-	var cmd tasks.TaskStatusCmd
+	var cmd TaskStatusCmd
 	if err := json.NewDecoder(r.Body).Decode(&cmd); err != nil {
-		h.logger.Error(fmt.Sprintf("/tasks handler failed to decode request body: %v", err))
+		log.Error(fmt.Sprintf("failed to decode request body: %v", err))
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusBadRequest,
-			Message:    fmt.Sprintf("failed to decode request body: %v", err),
+			Message:    "failed to decode request body",
 		}
 		e.SendJsonErr(w)
 		return
@@ -270,10 +298,10 @@ func (h *handler) handlePostTasks(w http.ResponseWriter, r *http.Request) {
 
 	// validate request body
 	if err := cmd.ValidateCmd(); err != nil {
-		h.logger.Error(fmt.Sprintf("/tasks handler failed to validate request body: %v", err))
+		log.Error("failed to validate request body", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusUnprocessableEntity,
-			Message:    fmt.Sprintf("invalid request body: %v", err),
+			Message:    err.Error(),
 		}
 		e.SendJsonErr(w)
 		return
@@ -283,7 +311,7 @@ func (h *handler) handlePostTasks(w http.ResponseWriter, r *http.Request) {
 		wg        sync.WaitGroup
 		errChan   = make(chan error, 2)
 		psMapChan = make(chan map[string]exo.PermissionRecord, 1)
-		taskChan  = make(chan TaskRecord, 1)
+		taskChan  = make(chan TaskData, 1)
 	)
 
 	// get fine grain permissions map for query building
@@ -291,9 +319,9 @@ func (h *handler) handlePostTasks(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		defer wg.Done()
 
-		ps, _, err := h.permissions.GetAllowancePermissions(jot.Claims.Subject)
+		ps, _, err := h.permissions.GetAllowancePermissions(authedUser.Claims.Subject)
 		if err != nil {
-			h.logger.Error(fmt.Sprintf("/tasks handler failed to get %s's permissions: %v", jot.Claims.Subject, err))
+			log.Error("failed to get user's permissions", "err", err.Error())
 			errChan <- err
 			return
 		}
@@ -324,15 +352,14 @@ func (h *handler) handlePostTasks(w http.ResponseWriter, r *http.Request) {
 
 	// check for errors
 	if len(errChan) > 0 {
-		var errs []string
+		var errs []error
 		for err := range errChan {
-			errs = append(errs, err.Error())
+			errs = append(errs, err)
 		}
-		errMsg := fmt.Sprintf("/task handler failed to get task (slug %s) record: %v", cmd.TaskSlug, strings.Join(errs, "; "))
-		h.logger.Error(errMsg)
+		log.Error(fmt.Sprintf("failed to get task slug %s", cmd.TaskSlug), "err", errors.Join(errs...))
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusInternalServerError,
-			Message:    errMsg,
+			Message:    "failed to get task",
 		}
 		e.SendJsonErr(w)
 		return
@@ -347,30 +374,31 @@ func (h *handler) handlePostTasks(w http.ResponseWriter, r *http.Request) {
 
 	// handle permission errors
 	if !isPayroll && !isRemittee {
-		errMsg := fmt.Sprintf("%s to update task slug (%s): %s", exo.UserForbidden, cmd.TaskSlug, jot.Claims.Subject)
-		h.logger.Error(errMsg)
+		log.Error(fmt.Sprintf("failed to update task slug %s", cmd.TaskSlug),
+			"err", "user does not have correct permissions to update this task")
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusForbidden,
-			Message:    errMsg,
+			Message:    "user does not have correct permissions to update this task",
 		}
 		e.SendJsonErr(w)
 		return
 	}
 
 	if !isPayroll && (cmd.Status == "is_satisfactory" || cmd.Status == "is_proactive") {
-		errMsg := fmt.Sprintf("%s to update task (slug %s) status %s: %s", exo.UserForbidden, cmd.TaskSlug, cmd.Status, jot.Claims.Subject)
-		h.logger.Error(errMsg)
+		log.Error(fmt.Sprintf("failed to update task slug %s status: %s", cmd.TaskSlug, cmd.Status),
+			"err", "user does not have correct permissions to update this status")
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusForbidden,
-			Message:    errMsg,
+			Message:    "user does not have correct permissions to update this status",
 		}
 		e.SendJsonErr(w)
 		return
 	}
 
-	if !isPayroll && (task.Username != jot.Claims.Subject || !isRemittee) {
-		errMsg := fmt.Sprintf("%s to update task (slug %s): %s", exo.UserForbidden, cmd.TaskSlug, jot.Claims.Subject)
-		h.logger.Error(errMsg)
+	if !isPayroll && (task.Username != authedUser.Claims.Subject || !isRemittee) {
+		errMsg := fmt.Sprintf("%s to update task (slug %s): %s", exo.UserForbidden, cmd.TaskSlug, authedUser.Claims.Subject)
+		log.Error(fmt.Sprintf("failed to update task slug %s", cmd.TaskSlug),
+			"err", "user does not have correct permissions to update this task")
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusForbidden,
 			Message:    errMsg,
@@ -380,7 +408,7 @@ func (h *handler) handlePostTasks(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// prepare record by setting all fields to the current values
-	record := Task{
+	record := TaskRecord{
 		Id:             task.Id,
 		CreatedAt:      task.CreatedAt,
 		IsComplete:     task.IsComplete,
@@ -416,7 +444,7 @@ func (h *handler) handlePostTasks(w http.ResponseWriter, r *http.Request) {
 
 	// remittee can update their own task complete status, or payroll can update it
 	if cmd.Status == "is_complete" &&
-		(isPayroll || (isRemittee && task.Username == jot.Claims.Subject)) {
+		(isPayroll || (isRemittee && task.Username == authedUser.Claims.Subject)) {
 
 		record.IsComplete = !task.IsComplete
 		if record.IsComplete {
@@ -433,10 +461,10 @@ func (h *handler) handlePostTasks(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.svc.UpdateTask(record); err != nil {
-		h.logger.Error(fmt.Sprintf("/tasks handler failed to update task (slug %s): %v", task.TaskSlug, err))
+		log.Error(fmt.Sprintf("failed to update task slug %s", cmd.TaskSlug), "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusInternalServerError,
-			Message:    fmt.Sprintf("failed to update task: %v", err),
+			Message:    "failed to update task",
 		}
 		e.SendJsonErr(w)
 		return
@@ -444,27 +472,27 @@ func (h *handler) handlePostTasks(w http.ResponseWriter, r *http.Request) {
 
 	// audit trail logs
 	if record.IsComplete != task.IsComplete {
-		h.logger.Info(fmt.Sprintf("task (slug %s) is_complete status updated to %t by %s", task.TaskSlug, record.IsComplete, jot.Claims.Subject))
+		log.Info(fmt.Sprintf("task slug %s is_complete status updated to %t", task.TaskSlug, record.IsComplete))
 		task.IsComplete = record.IsComplete // for return value
 	}
 
 	if record.IsSatisfactory != task.IsSatisfactory {
-		h.logger.Info(fmt.Sprintf("task (slug %s) is_satisfactory status updated to %t by %s", task.TaskSlug, record.IsSatisfactory, jot.Claims.Subject))
+		log.Info(fmt.Sprintf("task slug %s is_satisfactory status updated to %t", task.TaskSlug, record.IsSatisfactory))
 		task.IsSatisfactory = record.IsSatisfactory // for return value
 	}
 
 	if record.IsProactive != task.IsProactive {
-		h.logger.Info(fmt.Sprintf("task (slug %s) is_proactive status updated to %t by %s", task.TaskSlug, record.IsProactive, jot.Claims.Subject))
+		log.Info(fmt.Sprintf("task slug %s is_proactive status updated to %t", task.TaskSlug, record.IsProactive))
 		task.IsProactive = record.IsProactive // for return value
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(task); err != nil {
-		h.logger.Error(fmt.Sprintf("/tasks handler failed to send json response: %v", err))
+		log.Error("failed to json encode response", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusInternalServerError,
-			Message:    "internal server error",
+			Message:    "failed to json encode response",
 		}
 		e.SendJsonErr(w)
 		return

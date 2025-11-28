@@ -1,7 +1,6 @@
 package tasks
 
 import (
-	"apprentice/internal/util"
 	"database/sql"
 	"fmt"
 	"log/slog"
@@ -11,9 +10,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/tdeslauriers/apprentice/internal/util"
+	"github.com/tdeslauriers/apprentice/pkg/allowances"
 	"github.com/tdeslauriers/carapace/pkg/data"
 	exo "github.com/tdeslauriers/carapace/pkg/permissions"
-	"github.com/tdeslauriers/carapace/pkg/tasks"
 )
 
 // TaskService is an interface to handle task service functionality
@@ -24,19 +24,19 @@ type TaskService interface {
 	// Note: this is meant to be a Get All Tasks function and will default to returning all tasks (based on permissions)
 	// username (should come from a valid source like jwt subject) needed if permissions do not
 	// allow getting all tasks: it will filter for just that user's tasks
-	GetTasks(username string, paramas url.Values, permissions map[string]exo.PermissionRecord) ([]TaskRecord, error)
+	GetTasks(username string, paramas url.Values, permissions map[string]exo.PermissionRecord) ([]TaskData, error)
 
 	// GetTask retrieves a single task record from the database including its template data and allowance username + slug
-	GetTask(slug string) (*TaskRecord, error)
+	GetTask(slug string) (*TaskData, error)
 
 	// CreateTask creates a new task record in the database
-	CreateTask() (*Task, error)
+	CreateTask() (*TaskRecord, error)
 
 	// CreateAllowanceXref creates a new allowance-task xref record in the database
-	CreateAllowanceXref(t *Task, a *tasks.Allowance) (*TaskAllowanceXref, error)
+	CreateAllowanceXref(t *TaskRecord, a *allowances.Allowance) (*TaskAllowanceXref, error)
 
 	// UpdateTask updates a task record in the database
-	UpdateTask(t Task) error
+	UpdateTask(t TaskRecord) error
 }
 
 // NewTaskService creates a new TaskService interface, returning a pointer to the concrete implementation
@@ -66,7 +66,11 @@ type taskService struct {
 
 // GetTasks is a concrete implementation of the GetTasks method in the TaskService interface
 // internally, it uses a query builder to build the query based on the parameters and permissions passed in
-func (s *taskService) GetTasks(username string, params url.Values, permissions map[string]exo.PermissionRecord) ([]TaskRecord, error) {
+func (s *taskService) GetTasks(
+	username string,
+	params url.Values,
+	permissions map[string]exo.PermissionRecord,
+) ([]TaskData, error) {
 
 	// build the query string and arguments
 	qry, args, err := s.buildTaskQuery(username, params, permissions)
@@ -75,7 +79,7 @@ func (s *taskService) GetTasks(username string, params url.Values, permissions m
 	}
 
 	// execute the query and get the results
-	var tasks []TaskRecord
+	var tasks []TaskData
 	if err := s.db.SelectRecords(qry, &tasks, args...); err != nil {
 		return nil, fmt.Errorf("failed to select task records: %v", err)
 	}
@@ -100,7 +104,7 @@ func (s *taskService) GetTasks(username string, params url.Values, permissions m
 
 		// decrypted username
 		wg.Add(1)
-		go func(task *TaskRecord, ch chan error, wg *sync.WaitGroup) {
+		go func(task *TaskData, ch chan error, wg *sync.WaitGroup) {
 			defer wg.Done()
 
 			// check if the username is already in the cache
@@ -136,7 +140,7 @@ func (s *taskService) GetTasks(username string, params url.Values, permissions m
 
 		// decrypted allowance slug
 		wg.Add(1)
-		go func(task *TaskRecord, ch chan error, wg *sync.WaitGroup) {
+		go func(task *TaskData, ch chan error, wg *sync.WaitGroup) {
 			defer wg.Done()
 
 			// check if the allowance slug is already in the cache
@@ -188,7 +192,7 @@ func (s *taskService) GetTasks(username string, params url.Values, permissions m
 
 // GetTask is a concrete implementation of the GetTask method in the TaskService interface
 // it retrieves a single task record from the database including its template data and allowance username + slug
-func (s *taskService) GetTask(slug string) (*TaskRecord, error) {
+func (s *taskService) GetTask(slug string) (*TaskData, error) {
 
 	// quick validation of slug
 	if len(slug) < 16 || len(slug) > 64 {
@@ -217,7 +221,7 @@ func (s *taskService) GetTask(slug string) (*TaskRecord, error) {
 				LEFT OUTER JOIN task_allowance ta ON tsk.uuid = ta.task_uuid
 				LEFT OUTER JOIN allowance a ON ta.allowance_uuid = a.uuid
 			WHERE tsk.slug = ?`
-	var record TaskRecord
+	var record TaskData
 	if err := s.db.SelectRecord(qry, &record, slug); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("no task record found for slug %s", slug)
@@ -280,7 +284,7 @@ func (s *taskService) GetTask(slug string) (*TaskRecord, error) {
 }
 
 // CreateTask is a concrete implementation of the CreateTask method in the TaskService interface
-func (s *taskService) CreateTask() (*Task, error) {
+func (s *taskService) CreateTask() (*TaskRecord, error) {
 
 	// generate UUIDs for the task id and slug
 	id, err := uuid.NewRandom()
@@ -298,7 +302,7 @@ func (s *taskService) CreateTask() (*Task, error) {
 	}
 
 	// create the task record
-	task := Task{
+	task := TaskRecord{
 		Id:         id.String(),
 		CreatedAt:  data.CustomTime{Time: time.Now().UTC()},
 		IsComplete: false,
@@ -326,7 +330,7 @@ func (s *taskService) CreateTask() (*Task, error) {
 }
 
 // CreateAllowanceXref is a concrete implementation of the CreateAllowanceXref method in the TaskService interface
-func (s *taskService) CreateAllowanceXref(t *Task, a *tasks.Allowance) (*TaskAllowanceXref, error) {
+func (s *taskService) CreateAllowanceXref(t *TaskRecord, a *allowances.Allowance) (*TaskAllowanceXref, error) {
 
 	// create the new xref record
 	xref := TaskAllowanceXref{
@@ -351,7 +355,7 @@ func (s *taskService) CreateAllowanceXref(t *Task, a *tasks.Allowance) (*TaskAll
 }
 
 // UpdateTask is a concrete implementation of the UpdateTask method in the TaskService interface
-func (s *taskService) UpdateTask(t Task) error {
+func (s *taskService) UpdateTask(t TaskRecord) error {
 
 	// update the task record in the database
 	// these are the only field that may be updated. The rest are immutable
@@ -372,7 +376,7 @@ func (s *taskService) UpdateTask(t Task) error {
 func (s *taskService) buildTaskQuery(username string, params url.Values, permissions map[string]exo.PermissionRecord) (string, []interface{}, error) {
 
 	// validate params: redundant, but good practice.
-	if err := tasks.ValidateQueryParams(params); err != nil {
+	if err := ValidateQueryParams(params); err != nil {
 		return "", nil, err
 	}
 

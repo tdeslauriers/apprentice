@@ -1,8 +1,7 @@
 package allowances
 
 import (
-	"apprentice/internal/util"
-	"apprentice/pkg/permissions"
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -10,13 +9,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tdeslauriers/apprentice/internal/util"
+	"github.com/tdeslauriers/apprentice/pkg/permissions"
 	"github.com/tdeslauriers/carapace/pkg/connect"
 	"github.com/tdeslauriers/carapace/pkg/data"
 	"github.com/tdeslauriers/carapace/pkg/jwt"
-	exo "github.com/tdeslauriers/carapace/pkg/permissions"
-	"github.com/tdeslauriers/carapace/pkg/profile"
 	"github.com/tdeslauriers/carapace/pkg/session/provider"
-	"github.com/tdeslauriers/carapace/pkg/tasks"
+	"github.com/tdeslauriers/shaw/pkg/user"
 )
 
 // authorization
@@ -24,15 +23,20 @@ var getAllowancesAllowed []string = []string{"r:apprentice:allowances:*"}
 var postAllowancesAllowed []string = []string{"w:apprentice:allowances:*"}
 
 type AllowancesHandler interface {
-	// HandleAllowances handles the request to get all allowances and to create a new allowance account via post
+	// HandleAllowances handles  all requests to /allowances endpoint
 	HandleAllowances(w http.ResponseWriter, r *http.Request)
-
-	// HandleAllowance handles the request to get a specific allowance account
-	HandleAllowance(w http.ResponseWriter, r *http.Request)
 }
 
 // NewAllowancesHandler creates a new AllowancesHandler interface, returning a pointer to the concrete implementation
-func NewAllowancesHandler(s Service, p permissions.Service, s2s, iam jwt.Verifier, tkn provider.S2sTokenProvider, identity connect.S2sCaller) AllowancesHandler {
+func NewAllowancesHandler(
+	s Service,
+	p permissions.Service,
+	s2s jwt.Verifier,
+	iam jwt.Verifier,
+	tkn provider.S2sTokenProvider,
+	identity *connect.S2sCaller,
+) AllowancesHandler {
+
 	return &allowancesHandler{
 		service:    s,
 		permission: p,
@@ -42,7 +46,6 @@ func NewAllowancesHandler(s Service, p permissions.Service, s2s, iam jwt.Verifie
 		identity:   identity,
 
 		logger: slog.Default().
-			With(slog.String(util.ServiceKey, util.ServiceApprentice)).
 			With(slog.String(util.PackageKey, util.PackageAllowances)).
 			With(slog.String(util.ComponentKey, util.ComponentAllowances)),
 	}
@@ -57,85 +60,87 @@ type allowancesHandler struct {
 	s2s        jwt.Verifier
 	iam        jwt.Verifier
 	tkn        provider.S2sTokenProvider
-	identity   connect.S2sCaller
+	identity   *connect.S2sCaller
 
 	logger *slog.Logger
 }
 
-// HandleAllowances handles the request to get all allowances and to create a new allowance account via post
+// HandleAllowances handles all requests to /allowances endpoint
 func (h *allowancesHandler) HandleAllowances(w http.ResponseWriter, r *http.Request) {
 
+	// get telemetry from request
+	tel := connect.ObtainTelemetry(r, h.logger)
+	log := h.logger.With(tel.TelemetryFields()...)
+
 	switch r.Method {
 	case http.MethodGet:
-		h.handleGetAll(w, r)
-		return
+
+		// get slug if exists
+		slug := r.PathValue("slug")
+		if slug == "" {
+
+			h.getAll(w, r, log)
+			return
+		} else {
+			h.getAllowance(w, r, log)
+			return
+		}
 	case http.MethodPost:
-		h.handleCreate(w, r)
+		h.createAllowance(w, r, tel, log)
+		return
+	case http.MethodPut:
+		h.updateAllowance(w, r, log)
 		return
 	default:
-		h.logger.Error("only GET and POST requests are allowed to /allowances endpoint")
+		log.Error(fmt.Sprintf("unsupported method %s for endpoint %s", r.Method, r.URL.Path))
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusMethodNotAllowed,
-			Message:    "only GET and POST requests are allowed to /allowances endpoint",
+			Message:    fmt.Sprintf("unsupported method %s for endpoint %s", r.Method, r.URL.Path),
 		}
 		e.SendJsonErr(w)
 		return
 	}
 }
 
-func (h *allowancesHandler) HandleAllowance(w http.ResponseWriter, r *http.Request) {
-
-	switch r.Method {
-	case http.MethodGet:
-		h.handleGetAllownace(w, r)
-		return
-	case http.MethodPost:
-		h.handleUpdateAllowance(w, r)
-		return
-	default:
-		h.logger.Error("only GET and POST requests are allowed to /allowances/{slug} endpoint")
-		e := connect.ErrorHttp{
-			StatusCode: http.StatusMethodNotAllowed,
-			Message:    "only GET requests are allowed to /allowances/{slug} endpoint",
-		}
-		e.SendJsonErr(w)
-		return
-	}
-}
-
-// handleGetAll handles the GET request to get all allowances
-func (h *allowancesHandler) handleGetAll(w http.ResponseWriter, r *http.Request) {
+// getAll handles the GET request to get all allowances
+func (h *allowancesHandler) getAll(w http.ResponseWriter, r *http.Request, log *slog.Logger) {
 
 	// validate s2stoken
 	svcToken := r.Header.Get("Service-Authorization")
-	if _, err := h.s2s.BuildAuthorized(getAllowancesAllowed, svcToken); err != nil {
-		h.logger.Error(fmt.Sprintf("/allowances handler failed to authorize service token: %s", err.Error()))
+	authedSvc, err := h.s2s.BuildAuthorized(getAllowancesAllowed, svcToken)
+	if err != nil {
+		log.Error("failed to authorize service token", "err", err.Error())
 		connect.RespondAuthFailure(connect.S2s, err, w)
 		return
 	}
+	log = log.With("requesting_service", authedSvc.Claims.Subject)
 
 	// validate iam token
 	accessToken := r.Header.Get("Authorization")
-	if _, err := h.iam.BuildAuthorized(getAllowancesAllowed, accessToken); err != nil {
-		h.logger.Error(fmt.Sprintf("/allowances handler failed to authorize iam token: %s", err.Error()))
+	authedUser, err := h.iam.BuildAuthorized(getAllowancesAllowed, accessToken)
+	if err != nil {
+		log.Error("failed to authorize iam token", "err", err.Error())
 		connect.RespondAuthFailure(connect.User, err, w)
 		return
 	}
+	log = log.With("actor", authedUser.Claims.Subject)
 
-	// scope check is enough, no need to get permissions for this endpoint at this time.
+	// scope auth check is sufficient, no need to get permissions for this endpoint at this time.
 
 	// get all allowances
 	allowances, err := h.service.GetAllowances()
 	if err != nil {
-		h.logger.Error(fmt.Sprintf("/allowances get-handler failed to get all allowances: %s", err.Error()))
+		log.Error("failed to get allowances", "err", err.Error())
 		h.service.HandleAllowanceError(w, err)
 		return
 	}
 
+	log.Info(fmt.Sprintf("successfully retrieved %d allowance accounts", len(allowances)))
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(allowances); err != nil {
-		h.logger.Error(fmt.Sprintf("/allowances get-handler failed to json encode response: %s", err.Error()))
+		log.Error("failed to json encode response", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusInternalServerError,
 			Message:    "failed to json encode response",
@@ -145,29 +150,33 @@ func (h *allowancesHandler) handleGetAll(w http.ResponseWriter, r *http.Request)
 	}
 }
 
-func (h *allowancesHandler) handleGetAllownace(w http.ResponseWriter, r *http.Request) {
+// getAllowance handles the GET request to get a specific allowance by slug
+func (h *allowancesHandler) getAllowance(w http.ResponseWriter, r *http.Request, log *slog.Logger) {
 
-	// validate s2s token
+	// validate s2stoken
 	svcToken := r.Header.Get("Service-Authorization")
-	if _, err := h.s2s.BuildAuthorized(getAllowancesAllowed, svcToken); err != nil {
-		h.logger.Error(fmt.Sprintf("/allowance handler failed to authorize service token: %s", err.Error()))
+	authedSvc, err := h.s2s.BuildAuthorized(getAllowancesAllowed, svcToken)
+	if err != nil {
+		log.Error("failed to authorize service token", "err", err.Error())
 		connect.RespondAuthFailure(connect.S2s, err, w)
 		return
 	}
+	log = log.With("requesting_service", authedSvc.Claims.Subject)
 
 	// validate iam token
 	accessToken := r.Header.Get("Authorization")
-	jot, err := h.iam.BuildAuthorized(getAllowancesAllowed, accessToken)
+	authedUser, err := h.iam.BuildAuthorized(getAllowancesAllowed, accessToken)
 	if err != nil {
-		h.logger.Error(fmt.Sprintf("/allowance handler failed to authorize iam token: %s", err.Error()))
+		log.Error("failed to authorize iam token", "err", err.Error())
 		connect.RespondAuthFailure(connect.User, err, w)
 		return
 	}
+	log = log.With("actor", authedUser.Claims.Subject)
 
 	// get permissions
-	pm, _, err := h.permission.GetAllowancePermissions(jot.Claims.Subject)
+	pm, _, err := h.permission.GetAllowancePermissions(authedUser.Claims.Subject)
 	if err != nil {
-		h.logger.Error(fmt.Sprintf("/allowances handler failed to get permissions: %s", err.Error()))
+		log.Error("failed to get permissions", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusInternalServerError,
 			Message:    "failed to get permissions",
@@ -176,15 +185,14 @@ func (h *allowancesHandler) handleGetAllownace(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	// NOTE: not using concurrency here because if permissions are wrong, error immediately
+	// NOTE: not using concurrently here because if permissions are wrong, error immediately
 	// and not fetch and decrypt the allowance account record
 	// quick check permissions
 	if _, ok := pm[util.PermissionPayroll]; !ok {
-		errMsg := fmt.Sprintf("%s to view /allowances/{slug}", exo.UserForbidden)
-		h.logger.Error(errMsg)
+		log.Error("user does not have permission to get allowance account")
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusForbidden,
-			Message:    errMsg,
+			Message:    "user does not have permission to get allowance account",
 		}
 		e.SendJsonErr(w)
 		return
@@ -193,10 +201,10 @@ func (h *allowancesHandler) handleGetAllownace(w http.ResponseWriter, r *http.Re
 	// get the url slug from the request
 	slug, err := connect.GetValidSlug(r)
 	if err != nil {
-		h.logger.Error(fmt.Sprintf("failed to get valid slug from request: %s", err.Error()))
+		log.Error("failed to get valid slug from request", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusBadRequest,
-			Message:    "invalid service client slug",
+			Message:    "invalid allowance slug",
 		}
 		e.SendJsonErr(w)
 		return
@@ -205,14 +213,14 @@ func (h *allowancesHandler) handleGetAllownace(w http.ResponseWriter, r *http.Re
 	// get allowance
 	allowance, err := h.service.GetBySlug(slug)
 	if err != nil {
-		h.logger.Error(fmt.Sprintf("/allowances get-handler failed to get allowance: %s", err.Error()))
+		log.Error("failed to get allowance by slug", "err", err.Error())
 		h.service.HandleAllowanceError(w, err)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(allowance); err != nil {
-		h.logger.Error(fmt.Sprintf("/allowances/%s get-handler failed to json encode response: %s", slug, err.Error()))
+		log.Error("failed to json encode response", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusInternalServerError,
 			Message:    "failed to json encode response",
@@ -222,30 +230,36 @@ func (h *allowancesHandler) handleGetAllownace(w http.ResponseWriter, r *http.Re
 	}
 }
 
-// handleCreate handles the POST request to create a new allowance account
-func (h *allowancesHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
+// createAllowance handles the POST request to create a new allowance account
+func (h *allowancesHandler) createAllowance(w http.ResponseWriter, r *http.Request, tel *connect.Telemetry, log *slog.Logger) {
 
-	// validate s2s token
+	// add telemetry to context for downstream calls + service functions
+	ctx := context.WithValue(r.Context(), connect.TelemetryKey, tel)
+
+	// validate s2stoken
 	svcToken := r.Header.Get("Service-Authorization")
-	if _, err := h.s2s.BuildAuthorized(postAllowancesAllowed, svcToken); err != nil {
-		h.logger.Error(fmt.Sprintf("/allowances handler failed to authorize service token: %s", err.Error()))
+	authedSvc, err := h.s2s.BuildAuthorized(postAllowancesAllowed, svcToken)
+	if err != nil {
+		log.Error("failed to authorize service token", "err", err.Error())
 		connect.RespondAuthFailure(connect.S2s, err, w)
 		return
 	}
+	log = log.With("requesting_service", authedSvc.Claims.Subject)
 
 	// validate iam token
 	accessToken := r.Header.Get("Authorization")
-	authorized, err := h.iam.BuildAuthorized(postAllowancesAllowed, accessToken)
+	authedUser, err := h.iam.BuildAuthorized(postAllowancesAllowed, accessToken)
 	if err != nil {
-		h.logger.Error(fmt.Sprintf("/allowances handler failed to authorize iam token: %s", err.Error()))
+		log.Error("failed to authorize iam token", "err", err.Error())
 		connect.RespondAuthFailure(connect.User, err, w)
 		return
 	}
+	log = log.With("actor", authedUser.Claims.Subject)
 
 	// get permissions and validate user has permission to create allowance accounts, ie, payroll permission
-	pm, _, err := h.permission.GetAllowancePermissions(authorized.Claims.Subject)
+	pm, _, err := h.permission.GetAllowancePermissions(authedUser.Claims.Subject)
 	if err != nil {
-		h.logger.Error(fmt.Sprintf("/allowances post-handler failed to get permissions: %s", err.Error()))
+		log.Error("failed to get permissions", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusInternalServerError,
 			Message:    "failed to get permissions",
@@ -255,11 +269,10 @@ func (h *allowancesHandler) handleCreate(w http.ResponseWriter, r *http.Request)
 	}
 
 	if _, ok := pm[util.PermissionPayroll]; !ok {
-		errMsg := fmt.Sprintf("%s to create allowance account", exo.UserForbidden)
-		h.logger.Error(errMsg)
+		log.Error("user does not have permission to create allowance account")
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusForbidden,
-			Message:    errMsg,
+			Message:    "user does not have permission to create allowance account",
 		}
 		e.SendJsonErr(w)
 		return
@@ -268,7 +281,7 @@ func (h *allowancesHandler) handleCreate(w http.ResponseWriter, r *http.Request)
 	// decode request body
 	var cmd CreateAllowanceCmd
 	if err := json.NewDecoder(r.Body).Decode(&cmd); err != nil {
-		h.logger.Error(fmt.Sprintf("/allowances post-handler failed to decode request body: %s", err.Error()))
+		log.Error("failed to decode request body", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusBadRequest,
 			Message:    "failed to decode request body",
@@ -279,7 +292,7 @@ func (h *allowancesHandler) handleCreate(w http.ResponseWriter, r *http.Request)
 
 	// validate request body
 	if err := cmd.ValidateCmd(); err != nil {
-		h.logger.Error(fmt.Sprintf("/allowances post-handler failed to validate request body: %s", err.Error()))
+		log.Error("failed to validate request body", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusUnprocessableEntity,
 			Message:    err.Error(),
@@ -293,24 +306,30 @@ func (h *allowancesHandler) handleCreate(w http.ResponseWriter, r *http.Request)
 	// the identity service expects.  Also it is harder to fake a slug than an email.
 
 	// get service token
-	iamToken, err := h.tkn.GetServiceToken(util.ServiceIdentity)
+	s2sToken, err := h.tkn.GetServiceToken(ctx, util.ServiceIdentity)
 	if err != nil {
-		h.logger.Error(fmt.Sprintf("/allowances post-handler failed to get service token: %s", err.Error()))
+		log.Error("failed to get identity service token", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusInternalServerError,
-			Message:    "failed create allowance account due to internal service error",
+			Message:    "internal service error",
 		}
 		e.SendJsonErr(w)
 		return
 	}
 
 	// get user info from identity service --> service endpoint --> /s2s/users/{slug}
-	var user profile.User
-	if err := h.identity.GetServiceData(fmt.Sprintf("/s2s/users/%s", cmd.Slug), iamToken, "", &user); err != nil {
-		h.logger.Error(fmt.Sprintf("/allowances post-handler failed to get user info: %s", err.Error()))
+	user, err := connect.GetServiceData[user.User](
+		ctx,
+		h.identity,
+		fmt.Sprintf("/s2s/users/%s", cmd.Slug),
+		s2sToken,
+		"",
+	)
+	if err != nil {
+		log.Error("failed to get user info from identity service", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusInternalServerError,
-			Message:    "failed create allowance account due to internal service error",
+			Message:    "internal service error",
 		}
 		e.SendJsonErr(w)
 		return
@@ -318,7 +337,8 @@ func (h *allowancesHandler) handleCreate(w http.ResponseWriter, r *http.Request)
 
 	// validate submitted email matches the user's email from the identity service
 	if strings.TrimSpace(cmd.Username) != user.Username {
-		h.logger.Error("submitted username %s does not match user account username %s", cmd.Username, user.Username)
+		log.Error("failed to create allowance acocunt",
+			"err", "submitted email does not match user account email")
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusUnauthorized,
 			Message:    "submitted email does not match user account email",
@@ -329,7 +349,8 @@ func (h *allowancesHandler) handleCreate(w http.ResponseWriter, r *http.Request)
 
 	// validate user dob is on file
 	if user.BirthDate == "" {
-		h.logger.Error(fmt.Sprintf("failed to create allowance account because user account %s does not have a birth date on file", user.Username))
+		log.Error("failed to create allowance account",
+			"err", "user account does not have a birth date on file")
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusUnauthorized,
 			Message:    "failed to create allowance account because user account does not have a birth date on file",
@@ -340,7 +361,8 @@ func (h *allowancesHandler) handleCreate(w http.ResponseWriter, r *http.Request)
 
 	// validatte submitted dob matches the user's dob from the identity service
 	if strings.TrimSpace(cmd.BirthDate) != user.BirthDate {
-		h.logger.Error(fmt.Sprintf("submitted birth date %s does not match user account %s birth date %s", cmd.BirthDate, user.Username, user.BirthDate))
+		log.Error("failed to create allowance account",
+			"err", "submitted birth date does not match user account birth date")
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusUnauthorized,
 			Message:    "submitted birth date does not match user account birth date",
@@ -351,10 +373,10 @@ func (h *allowancesHandler) handleCreate(w http.ResponseWriter, r *http.Request)
 
 	// validate account is not disabled
 	if !user.Enabled {
-		h.logger.Error(fmt.Sprintf("failed to create allowance account because user account %s is disabled", user.Username))
+		log.Error("failed to create allowance account", "err", "user account is disabled")
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusUnauthorized,
-			Message:    "failed to create allowance account because user account is disabled",
+			Message:    "user account is disabled",
 		}
 		e.SendJsonErr(w)
 		return
@@ -362,10 +384,10 @@ func (h *allowancesHandler) handleCreate(w http.ResponseWriter, r *http.Request)
 
 	// validate account is not locked
 	if user.AccountLocked {
-		h.logger.Error(fmt.Sprintf("failed to create allowance account because user account %s is locked", user.Username))
+		log.Error("failed to create allowance account", "err", "account is locked")
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusUnauthorized,
-			Message:    "failed to create allowance account because user account is locked",
+			Message:    "account is locked",
 		}
 		e.SendJsonErr(w)
 		return
@@ -373,10 +395,10 @@ func (h *allowancesHandler) handleCreate(w http.ResponseWriter, r *http.Request)
 
 	// validate account is not expired
 	if user.AccountExpired {
-		h.logger.Error(fmt.Sprintf("failed to create allowance account because user account %s is expired", user.Username))
+		log.Error("failed to create allowance account", "err", "account is expired")
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusUnauthorized,
-			Message:    "failed to create allowance account because user account is expired",
+			Message:    "account is expired",
 		}
 		e.SendJsonErr(w)
 		return
@@ -387,19 +409,18 @@ func (h *allowancesHandler) handleCreate(w http.ResponseWriter, r *http.Request)
 	// and return an error if it does
 	allowance, err := h.service.CreateAllowance(cmd.Username)
 	if err != nil {
-		errMsg := fmt.Sprintf("/allowances post-handler failed to create allowance account for user %s: %s", cmd.Username, err.Error())
-		h.logger.Error(errMsg)
+		log.Error("failed to create allowance account", "err", err.Error())
 		h.service.HandleAllowanceError(w, err)
 		return
 	}
 
 	// audit log
-	h.logger.Info(fmt.Sprintf("allowance account created for user %s by %s", cmd.Username, authorized.Claims.Subject))
+	log.Info(fmt.Sprintf("allowance account successfully created for user %s", user.Username))
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	if err := json.NewEncoder(w).Encode(allowance); err != nil {
-		h.logger.Error(fmt.Sprintf("/allowances post-handler failed to json encode response: %s", err.Error()))
+		log.Error(fmt.Sprintf("/allowances post-handler failed to json encode response: %s", err.Error()))
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusInternalServerError,
 			Message:    "failed to json encode response",
@@ -409,29 +430,33 @@ func (h *allowancesHandler) handleCreate(w http.ResponseWriter, r *http.Request)
 	}
 }
 
-func (h *allowancesHandler) handleUpdateAllowance(w http.ResponseWriter, r *http.Request) {
+// updateAllowance handles the PUT request to update an allowance account
+func (h *allowancesHandler) updateAllowance(w http.ResponseWriter, r *http.Request, log *slog.Logger) {
 
-	// validate s2s token
+	// validate s2stoken
 	svcToken := r.Header.Get("Service-Authorization")
-	if _, err := h.s2s.BuildAuthorized(postAllowancesAllowed, svcToken); err != nil {
-		h.logger.Error(fmt.Sprintf("/allowance handler failed to authorize service token: %s", err.Error()))
+	authedSvc, err := h.s2s.BuildAuthorized(postAllowancesAllowed, svcToken)
+	if err != nil {
+		log.Error("failed to authorize service token", "err", err.Error())
 		connect.RespondAuthFailure(connect.S2s, err, w)
 		return
 	}
+	log = log.With("requesting_service", authedSvc.Claims.Subject)
 
 	// validate iam token
 	accessToken := r.Header.Get("Authorization")
-	authorized, err := h.iam.BuildAuthorized(postAllowancesAllowed, accessToken)
+	authedUser, err := h.iam.BuildAuthorized(postAllowancesAllowed, accessToken)
 	if err != nil {
-		h.logger.Error(fmt.Sprintf("/allowance handler failed to authorize iam token: %s", err.Error()))
+		log.Error("failed to authorize iam token", "err", err.Error())
 		connect.RespondAuthFailure(connect.User, err, w)
 		return
 	}
+	log = log.With("actor", authedUser.Claims.Subject)
 
 	// get the url slug from the request
 	slug, err := connect.GetValidSlug(r)
 	if err != nil {
-		h.logger.Error(fmt.Sprintf("failed to get valid slug from request: %s", err.Error()))
+		log.Error("failed to get valid slug from request", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusBadRequest,
 			Message:    "invalid service client slug",
@@ -441,9 +466,9 @@ func (h *allowancesHandler) handleUpdateAllowance(w http.ResponseWriter, r *http
 	}
 
 	// decode request body
-	var cmd tasks.UpdateAllowanceCmd
+	var cmd UpdateAllowanceCmd
 	if err := json.NewDecoder(r.Body).Decode(&cmd); err != nil {
-		h.logger.Error(fmt.Sprintf("/allowances/%s put-handler failed to decode request body: %s", slug, err.Error()))
+		log.Error("failed to decode request body", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusBadRequest,
 			Message:    "failed to decode request body",
@@ -454,7 +479,7 @@ func (h *allowancesHandler) handleUpdateAllowance(w http.ResponseWriter, r *http
 
 	// validate request body
 	if err := cmd.ValidateCmd(); err != nil {
-		h.logger.Error(fmt.Sprintf("/allowances/%s put-handler failed to validate request body: %s", slug, err.Error()))
+		log.Error("failed to validate request body", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusUnprocessableEntity,
 			Message:    err.Error(),
@@ -464,9 +489,9 @@ func (h *allowancesHandler) handleUpdateAllowance(w http.ResponseWriter, r *http
 	}
 
 	// get permissions and validate user has permission to update allowance accounts, ie, payroll permission
-	pm, _, err := h.permission.GetAllowancePermissions(authorized.Claims.Subject)
+	pm, _, err := h.permission.GetAllowancePermissions(authedUser.Claims.Subject)
 	if err != nil {
-		h.logger.Error(fmt.Sprintf("/allowances put-handler failed to get permissions: %s", err.Error()))
+		log.Error("failed to get permissions", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusInternalServerError,
 			Message:    "failed to get permissions",
@@ -475,12 +500,12 @@ func (h *allowancesHandler) handleUpdateAllowance(w http.ResponseWriter, r *http
 		return
 	}
 
+	// check if user has payroll permission
 	if _, ok := pm[util.PermissionPayroll]; !ok {
-		errMsg := fmt.Sprintf("%s to update /allowances/%s", slug, exo.UserForbidden)
-		h.logger.Error(errMsg)
+		log.Error("user does not have permission to update allowance account")
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusForbidden,
-			Message:    errMsg,
+			Message:    "user does not have permission to update allowance account",
 		}
 		e.SendJsonErr(w)
 		return
@@ -489,20 +514,21 @@ func (h *allowancesHandler) handleUpdateAllowance(w http.ResponseWriter, r *http
 	// get allowance by slug to check update values for business logic issues
 	allowance, err := h.service.GetBySlug(slug)
 	if err != nil {
+		log.Error("failed to get allowance by slug", "err", err.Error())
 		h.service.HandleAllowanceError(w, err)
 		return
 	}
 
 	// validate update values --> business logic
 	if err := h.service.ValidateUpdate(cmd, *allowance); err != nil {
-		h.logger.Error(fmt.Sprintf("failed to update %s's allowance account: %s", allowance.Username, err.Error()))
+		log.Error("failed to validate allowance update", "err", err.Error())
 		h.service.HandleAllowanceError(w, err)
 		return
 	}
 
 	// prepare updated allowance
 	// used as return object if update successful
-	updated := tasks.Allowance{
+	updated := Allowance{
 		// slug index not provided by GetAllowance(slug)
 		Id:           allowance.Id,
 		Balance:      allowance.Balance + cmd.Credit - cmd.Debit,
@@ -517,39 +543,58 @@ func (h *allowancesHandler) handleUpdateAllowance(w http.ResponseWriter, r *http
 
 	// update allowance account
 	if err := h.service.UpdateAllowance(&updated); err != nil {
+		log.Error("failed to update allowance account", "err", err.Error())
 		h.service.HandleAllowanceError(w, err)
 		return
 	}
 
 	// audit log
+	var updatedFields []any
 	if cmd.Credit > 0 {
-		h.logger.Info(fmt.Sprintf("%s's allowance account successfully credited $%.2f by %s", allowance.Username, float64(cmd.Credit)/float64(100), authorized.Claims.Subject))
+		updatedFields = append(updatedFields,
+			slog.String("previous_balance", fmt.Sprintf("%.2f", float64(allowance.Balance)/100)),
+			slog.String("new_balance", fmt.Sprintf("%.2f", float64(updated.Balance)/100)),
+			slog.String("change_type", "credit"),
+			slog.String("change_amount", fmt.Sprintf("%.2f", float64(cmd.Credit)/100)))
 	}
 
 	if cmd.Debit > 0 {
-		h.logger.Info(fmt.Sprintf("%s's allowance account successfully debited $%.2f by %s", allowance.Username, float64(cmd.Debit)/float64(100), authorized.Claims.Subject))
+		updatedFields = append(updatedFields,
+			slog.String("previous_balance", fmt.Sprintf("%.2f", float64(allowance.Balance)/100)),
+			slog.String("new_balance", fmt.Sprintf("%.2f", float64(updated.Balance)/100)),
+			slog.String("change_type", "debit"),
+			slog.Float64("change_amount", float64(cmd.Debit)/100),
+		)
 	}
 
-	if updated.Balance != allowance.Balance {
-		h.logger.Info(fmt.Sprintf("%s's allowance account successfully updated by %s to new balance of $%.2f", allowance.Username, authorized.Claims.Subject, float64(updated.Balance)/float64(100)))
+	if cmd.IsArchived != allowance.IsArchived {
+		updatedFields = append(updatedFields,
+			slog.Bool("previous_is_archived", allowance.IsArchived),
+			slog.Bool("new_is_archived", updated.IsArchived),
+		)
 	}
 
-	if updated.IsArchived != allowance.IsArchived {
-		h.logger.Info(fmt.Sprintf("%s's allowance account archived status updated to '%t' by %s", allowance.Username, updated.IsArchived, authorized.Claims.Subject))
+	if cmd.IsActive != allowance.IsActive {
+		updatedFields = append(updatedFields,
+			slog.Bool("previous_is_active", allowance.IsActive),
+			slog.Bool("new_is_active", updated.IsActive),
+		)
 	}
 
-	if updated.IsActive != allowance.IsActive {
-		h.logger.Info(fmt.Sprintf("%s's allowance account active status updated to '%t' by %s", allowance.Username, updated.IsActive, authorized.Claims.Subject))
+	if cmd.IsCalculated != allowance.IsCalculated {
+		updatedFields = append(updatedFields,
+			slog.Bool("previous_is_calculated", allowance.IsCalculated),
+			slog.Bool("new_is_calculated", updated.IsCalculated),
+		)
 	}
 
-	if updated.IsCalculated != allowance.IsCalculated {
-		h.logger.Info(fmt.Sprintf("%s's allowance account calculated status updated to '%t' by %s", allowance.Username, updated.IsCalculated, authorized.Claims.Subject))
-	}
+	log = log.With(updatedFields...)
+	log.Info("user successfully updated their allowance account")
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(updated); err != nil {
-		h.logger.Error(fmt.Sprintf("/allowances/%s post-handler failed to json encode response: %s", slug, err.Error()))
+		log.Error("failed to json encode response", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusInternalServerError,
 			Message:    "failed to json encode response",

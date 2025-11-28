@@ -53,8 +53,8 @@ CREATE TABLE permission (
     description VARCHAR(512) NOT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT UTC_TIMESTAMP,
     active BOOLEAN NOT NULL,
-    slug CHAR(128) NOT NULL
-    slug_index CHAR(128) NOT NULL,
+    slug CHAR(128) NOT NULL,
+    slug_index CHAR(128) NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_permission_slug_index ON permission (slug_index);
 

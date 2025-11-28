@@ -1,13 +1,14 @@
 package tasks
 
 import (
-	"apprentice/internal/util"
 	"database/sql"
 	"fmt"
 	"log/slog"
 	"math/rand"
 	"strings"
 	"time"
+
+	"github.com/tdeslauriers/apprentice/internal/util"
 
 	"github.com/google/uuid"
 	"github.com/tdeslauriers/carapace/pkg/data"
@@ -220,7 +221,7 @@ func (s *scheduledService) generateScheduledTasks(cadence tasks.Cadence) error {
 				return fmt.Errorf("failed to create slug for %s task generation: %v", strings.ToLower(string(cadence)), err)
 			}
 
-			task := Task{
+			task := TaskRecord{
 				Id:             id.String(),
 				CreatedAt:      data.CustomTime{Time: time.Now().UTC()},
 				IsComplete:     false,

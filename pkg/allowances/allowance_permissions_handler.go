@@ -1,11 +1,13 @@
 package allowances
 
 import (
-	"apprentice/internal/util"
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
+
+	"github.com/tdeslauriers/apprentice/internal/util"
 
 	"github.com/tdeslauriers/carapace/pkg/connect"
 	"github.com/tdeslauriers/carapace/pkg/jwt"
@@ -35,7 +37,6 @@ func NewAllowancePermissionsHandler(s Service, s2s, iam jwt.Verifier) AllowanceP
 		iamVerify: iam,
 
 		logger: slog.Default().
-			With(slog.String(util.ServiceKey, util.ServiceApprentice)).
 			With(slog.String(util.PackageKey, util.PackageAllowances)).
 			With(slog.String(util.ComponentKey, util.ComponentAllownacePermisssionsHandler)),
 	}
@@ -56,17 +57,22 @@ type allowancePermissionsHandler struct {
 // It handles requests related to allowance permissions
 func (h *allowancePermissionsHandler) HandlePermissions(w http.ResponseWriter, r *http.Request) {
 
+	// get telemetry from request
+	tel := connect.ObtainTelemetry(r, h.logger)
+	log := h.logger.With(tel.TelemetryFields()...)
+
 	switch r.Method {
 	case http.MethodGet:
-		h.getAllowancePermissions(w, r)
+		h.getAllowancePermissions(w, r, log)
 		return
 	case http.MethodPost:
-		h.updateAllowancePermissions(w, r)
+		h.updateAllowancePermissions(w, r, tel, log)
 		return
 	default:
+		log.Error(fmt.Sprintf("unsupported method %s for endpoint %s", r.Method, r.URL.Path))
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusMethodNotAllowed,
-			Message:    "method not allowed",
+			Message:    fmt.Sprintf("unsupported method %s for endpoint %s", r.Method, r.URL.Path),
 		}
 		e.SendJsonErr(w)
 		return
@@ -74,20 +80,22 @@ func (h *allowancePermissionsHandler) HandlePermissions(w http.ResponseWriter, r
 }
 
 // getAllowancePermissions handles the retrieval of an allowance account's permissions
-func (h *allowancePermissionsHandler) getAllowancePermissions(w http.ResponseWriter, r *http.Request) {
+func (h *allowancePermissionsHandler) getAllowancePermissions(w http.ResponseWriter, r *http.Request, log *slog.Logger) {
 
 	// validate the s2s token
 	s2sToken := r.Header.Get("Service-Authorization")
-	if _, err := h.s2sVerify.BuildAuthorized(readAllowancePermissionsAllowed, s2sToken); err != nil {
-		h.logger.Error(fmt.Sprintf("allowance permissions endpoint failed to verify service token: %v", err))
+	authedSvc, err := h.s2sVerify.BuildAuthorized(readAllowancePermissionsAllowed, s2sToken)
+	if err != nil {
+		log.Error("failed to authorize service token", "err", err.Error())
 		connect.RespondAuthFailure(connect.S2s, err, w)
 		return
 	}
+	log = log.With("requesting_service", authedSvc.Claims.Subject)
 
 	// validate the iam token
 	iamToken := r.Header.Get("Authorization")
 	if _, err := h.iamVerify.BuildAuthorized(readAllowancePermissionsAllowed, iamToken); err != nil {
-		h.logger.Error(fmt.Sprintf("allowance permissions endpoint failed to verify iam token: %v", err))
+		log.Error("failed to authorize iam token", "err", err.Error())
 		connect.RespondAuthFailure(connect.User, err, w)
 		return
 	}
@@ -95,7 +103,7 @@ func (h *allowancePermissionsHandler) getAllowancePermissions(w http.ResponseWri
 	// get query parameters -> email address of the allowance account
 	username := r.URL.Query().Get("username")
 	if username == "" {
-		h.logger.Error("allowance permissions endpoint missing username query parameter")
+		log.Error("url missing username query parameter")
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusBadRequest,
 			Message:    "missing username query parameter",
@@ -106,10 +114,10 @@ func (h *allowancePermissionsHandler) getAllowancePermissions(w http.ResponseWri
 
 	// validate the username is a well-formed email address
 	if err := validate.IsValidEmail(username); err != nil {
-		h.logger.Error(fmt.Sprintf("allowance permissions endpoint received an invalid username: %v", err))
+		log.Error("failed to validate username parmameter", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusBadRequest,
-			Message:    fmt.Sprintf("invalid username: %v", err),
+			Message:    err.Error(),
 		}
 		e.SendJsonErr(w)
 		return
@@ -118,10 +126,10 @@ func (h *allowancePermissionsHandler) getAllowancePermissions(w http.ResponseWri
 	// lookup the allowance account's permissions by username/email
 	_, permissions, err := h.service.GetAllowancePermissions(username)
 	if err != nil {
-		h.logger.Error(fmt.Sprintf("failed to get allowance account permissions for user %s: %v", username, err))
+		h.logger.Error("failed to get allowance account permissions for user", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusNotFound,
-			Message:    fmt.Sprintf("allowance account not found for user %s", username),
+			Message:    "failed to get allowance account permissions for user ",
 		}
 		e.SendJsonErr(w)
 		return
@@ -130,16 +138,16 @@ func (h *allowancePermissionsHandler) getAllowancePermissions(w http.ResponseWri
 	// NOTE: IT IS IMPORTANT TO RETURN THE EMPTY ARRAY IF NO PERMISSIONS ARE FOUND
 	// BECAUSE IT IS POSSIBLE FOR AN ALLOWANCE ACCOUNT TO HAVE NO PERMISSIONS
 	if permissions == nil {
-		h.logger.Warn(fmt.Sprintf("no permissions found for allowance account %s", username))
+		h.logger.Warn("no permissions found for allowance account")
 	}
 
 	// respond with the permissions
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(permissions); err != nil {
-		h.logger.Error(fmt.Sprintf("failed to encode permissions for allowance account %s: %v", username, err))
+		h.logger.Error("failed to encode permissions for allowance account", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusInternalServerError,
-			Message:    fmt.Sprintf("failed to encode permissions for allowance account %s", username),
+			Message:    "failed to encode permissions for allowance account",
 		}
 		e.SendJsonErr(w)
 		return
@@ -147,30 +155,40 @@ func (h *allowancePermissionsHandler) getAllowancePermissions(w http.ResponseWri
 }
 
 // updateAllowancePermissions handles the updating of allowance's permissions
-func (h *allowancePermissionsHandler) updateAllowancePermissions(w http.ResponseWriter, r *http.Request) {
+func (h *allowancePermissionsHandler) updateAllowancePermissions(
+	w http.ResponseWriter,
+	r *http.Request,
+	tel *connect.Telemetry,
+	log *slog.Logger,
+) {
+
+	// add telemetry to context for downstream calls + service functions
+	ctx := context.WithValue(r.Context(), connect.TelemetryKey, tel)
 
 	// verify the service token
 	s2sToken := r.Header.Get("Service-Authorization")
-	_, err := h.s2sVerify.BuildAuthorized(updateAllowancePermissionsAllowed, s2sToken)
+	authedSvc, err := h.s2sVerify.BuildAuthorized(updateAllowancePermissionsAllowed, s2sToken)
 	if err != nil {
-		h.logger.Error(fmt.Sprintf("allowance permissions endpoint failed to verify service token: %v", err))
+		log.Error("failed to authorize service token", "err", err.Error())
 		connect.RespondAuthFailure(connect.S2s, err, w)
 		return
 	}
+	log = log.With("requesting_service", authedSvc.Claims.Subject)
 
 	// verify the iam token
 	iamToken := r.Header.Get("Authorization")
-	authorized, err := h.iamVerify.BuildAuthorized(updateAllowancePermissionsAllowed, iamToken)
+	authedUser, err := h.iamVerify.BuildAuthorized(updateAllowancePermissionsAllowed, iamToken)
 	if err != nil {
-		h.logger.Error(fmt.Sprintf("allowance permissions endpoint failed to verify iam token: %v", err))
+		log.Error("failed to authorize iam token", "err", err.Error())
 		connect.RespondAuthFailure(connect.User, err, w)
 		return
 	}
+	log = log.With("actor", authedUser.Claims.Subject)
 
 	// get the request body
 	var cmd exo.UpdatePermissionsCmd
 	if err := json.NewDecoder(r.Body).Decode(&cmd); err != nil {
-		h.logger.Error(fmt.Sprintf("error decoding request body: %v", err))
+		log.Error("failed to decode request body", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusBadRequest,
 			Message:    "invalid request body",
@@ -181,10 +199,10 @@ func (h *allowancePermissionsHandler) updateAllowancePermissions(w http.Response
 
 	// validate the request body
 	if err := cmd.Validate(); err != nil {
-		h.logger.Error(fmt.Sprintf("error validating request body: %v", err))
+		log.Error("failed to validate request body", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusUnprocessableEntity,
-			Message:    fmt.Sprintf("invalid request body: %v", err),
+			Message:    err.Error(),
 		}
 		e.SendJsonErr(w)
 		return
@@ -194,38 +212,46 @@ func (h *allowancePermissionsHandler) updateAllowancePermissions(w http.Response
 	// in this case the entity is the allowance account username/email
 	allowance, err := h.service.GetByUser(cmd.Entity)
 	if err != nil {
-		h.logger.Error(fmt.Sprintf("failed to get allowance account for user %s: %v", cmd.Entity, err))
+		log.Error("failed to find allowance account for user", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusNotFound,
-			Message:    fmt.Sprintf("allowance account not found for user %s", cmd.Entity),
+			Message:    err.Error(),
 		}
 		e.SendJsonErr(w)
 		return
 	}
 
 	// update the permissions for the allowance account
-	added, removed, err := h.service.UpdateAllowancePermissions(allowance, cmd.Permissions)
+	added, removed, err := h.service.UpdateAllowancePermissions(ctx, allowance, cmd.Permissions)
 	if err != nil {
-		h.logger.Error(fmt.Sprintf("failed to update permissions for allowance account %s: %v", allowance.Slug, err))
+		log.Error("failed to update permissions for allowance account permissions", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusInternalServerError,
-			Message:    fmt.Sprintf("failed to update permissions for allowance account %s", allowance.Slug),
+			Message:    err.Error(),
 		}
 		e.SendJsonErr(w)
 		return
 	}
 
 	// audit log
-	if added != nil && len(added) > 0 {
+	var updatedPermissions []any
+	if len(added) > 0 {
 		for _, p := range added {
-			h.logger.Info(fmt.Sprintf("permission %s to allowance account %s by %s", p.Name, allowance.Slug, authorized.Claims.Subject))
+			updatedPermissions = append(updatedPermissions, slog.String("added_permission", p.Name))
 		}
 	}
 
-	if removed != nil && len(removed) > 0 {
+	if len(removed) > 0 {
 		for _, p := range removed {
-			h.logger.Info(fmt.Sprintf("removed permission %s from allowance account %s by %s", p.Name, allowance.Slug, authorized.Claims.Subject))
+			updatedPermissions = append(updatedPermissions, slog.String("removed permission %s", p.Name))
 		}
+	}
+
+	if len(updatedPermissions) > 0 {
+		log = log.With(updatedPermissions...)
+		log.Info(fmt.Sprintf("successfully updated permissions for allowance account %s", allowance.Username))
+	} else {
+		log.Info(fmt.Sprintf("no permission changes made for allowance account %s", allowance.Username))
 	}
 
 	// respond 204: No Content
