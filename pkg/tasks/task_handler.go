@@ -76,18 +76,18 @@ type handler struct {
 // HandleTasks is a concrete implementation of the HandleTasks method in the Handler interface
 func (h *handler) HandleTasks(w http.ResponseWriter, r *http.Request) {
 
-	// get telemetry from request
-	tel := connect.ObtainTelemetry(r, h.logger)
-	log := h.logger.With(tel.TelemetryFields()...)
-
 	switch r.Method {
 	case http.MethodGet:
-		h.getTasks(w, r, tel, log)
+		h.getTasks(w, r)
 		return
 	case http.MethodPatch:
-		h.updateTaskStatus(w, r, log)
+		h.updateTaskStatus(w, r)
 		return
 	default:
+		// get telemetry from request
+		tel := connect.ObtainTelemetry(r, h.logger)
+		log := h.logger.With(tel.TelemetryFields()...)
+
 		log.Error(fmt.Sprintf("unsupported method %s for endpoint %s", r.Method, r.URL.Path))
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusMethodNotAllowed,
@@ -101,7 +101,11 @@ func (h *handler) HandleTasks(w http.ResponseWriter, r *http.Request) {
 // getTasks is a concrete implementation of the HandleTasks GET functionality.
 // It handles query params and returns a list of tasks.   In addition to jwt authorization,
 // it also checks the fine grain permissions for the user.
-func (h *handler) getTasks(w http.ResponseWriter, r *http.Request, tel *connect.Telemetry, log *slog.Logger) {
+func (h *handler) getTasks(w http.ResponseWriter, r *http.Request) {
+
+	// get telemetry from request
+	tel := connect.ObtainTelemetry(r, h.logger)
+	log := h.logger.With(tel.TelemetryFields()...)
 
 	// add telemetry to context for downstream calls + service functions
 	ctx := context.WithValue(r.Context(), connect.TelemetryKey, tel)
@@ -261,7 +265,11 @@ func (h *handler) getTasks(w http.ResponseWriter, r *http.Request, tel *connect.
 
 // updateTaskStatus is a concrete implementation of the HandleTasks POST functionality.
 // It handles updating a task record status.
-func (h *handler) updateTaskStatus(w http.ResponseWriter, r *http.Request, log *slog.Logger) {
+func (h *handler) updateTaskStatus(w http.ResponseWriter, r *http.Request) {
+
+	// get telemetry from request
+	tel := connect.ObtainTelemetry(r, h.logger)
+	log := h.logger.With(tel.TelemetryFields()...)
 
 	// validate s2s token
 	svcToken := r.Header.Get("Service-Authorization")

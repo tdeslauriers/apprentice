@@ -68,10 +68,6 @@ type allowancesHandler struct {
 // HandleAllowances handles all requests to /allowances endpoint
 func (h *allowancesHandler) HandleAllowances(w http.ResponseWriter, r *http.Request) {
 
-	// get telemetry from request
-	tel := connect.ObtainTelemetry(r, h.logger)
-	log := h.logger.With(tel.TelemetryFields()...)
-
 	switch r.Method {
 	case http.MethodGet:
 
@@ -79,19 +75,23 @@ func (h *allowancesHandler) HandleAllowances(w http.ResponseWriter, r *http.Requ
 		slug := r.PathValue("slug")
 		if slug == "" {
 
-			h.getAll(w, r, log)
+			h.getAll(w, r)
 			return
 		} else {
-			h.getAllowance(w, r, log)
+			h.getAllowance(w, r)
 			return
 		}
 	case http.MethodPost:
-		h.createAllowance(w, r, tel, log)
+		h.createAllowance(w, r)
 		return
 	case http.MethodPut:
-		h.updateAllowance(w, r, log)
+		h.updateAllowance(w, r)
 		return
 	default:
+		// get telemetry from request
+		tel := connect.ObtainTelemetry(r, h.logger)
+		log := h.logger.With(tel.TelemetryFields()...)
+
 		log.Error(fmt.Sprintf("unsupported method %s for endpoint %s", r.Method, r.URL.Path))
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusMethodNotAllowed,
@@ -103,7 +103,11 @@ func (h *allowancesHandler) HandleAllowances(w http.ResponseWriter, r *http.Requ
 }
 
 // getAll handles the GET request to get all allowances
-func (h *allowancesHandler) getAll(w http.ResponseWriter, r *http.Request, log *slog.Logger) {
+func (h *allowancesHandler) getAll(w http.ResponseWriter, r *http.Request) {
+
+	// get telemetry from request
+	tel := connect.ObtainTelemetry(r, h.logger)
+	log := h.logger.With(tel.TelemetryFields()...)
 
 	// validate s2stoken
 	svcToken := r.Header.Get("Service-Authorization")
@@ -151,7 +155,11 @@ func (h *allowancesHandler) getAll(w http.ResponseWriter, r *http.Request, log *
 }
 
 // getAllowance handles the GET request to get a specific allowance by slug
-func (h *allowancesHandler) getAllowance(w http.ResponseWriter, r *http.Request, log *slog.Logger) {
+func (h *allowancesHandler) getAllowance(w http.ResponseWriter, r *http.Request) {
+
+	// get telemetry from request
+	tel := connect.ObtainTelemetry(r, h.logger)
+	log := h.logger.With(tel.TelemetryFields()...)
 
 	// validate s2stoken
 	svcToken := r.Header.Get("Service-Authorization")
@@ -231,7 +239,11 @@ func (h *allowancesHandler) getAllowance(w http.ResponseWriter, r *http.Request,
 }
 
 // createAllowance handles the POST request to create a new allowance account
-func (h *allowancesHandler) createAllowance(w http.ResponseWriter, r *http.Request, tel *connect.Telemetry, log *slog.Logger) {
+func (h *allowancesHandler) createAllowance(w http.ResponseWriter, r *http.Request) {
+
+	// get telemetry from request
+	tel := connect.ObtainTelemetry(r, h.logger)
+	log := h.logger.With(tel.TelemetryFields()...)
 
 	// add telemetry to context for downstream calls + service functions
 	ctx := context.WithValue(r.Context(), connect.TelemetryKey, tel)
@@ -431,7 +443,11 @@ func (h *allowancesHandler) createAllowance(w http.ResponseWriter, r *http.Reque
 }
 
 // updateAllowance handles the PUT request to update an allowance account
-func (h *allowancesHandler) updateAllowance(w http.ResponseWriter, r *http.Request, log *slog.Logger) {
+func (h *allowancesHandler) updateAllowance(w http.ResponseWriter, r *http.Request) {
+
+	// get telemetry from request
+	tel := connect.ObtainTelemetry(r, h.logger)
+	log := h.logger.With(tel.TelemetryFields()...)
 
 	// validate s2stoken
 	svcToken := r.Header.Get("Service-Authorization")

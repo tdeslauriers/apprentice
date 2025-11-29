@@ -55,19 +55,19 @@ type accountHandler struct {
 // HandleAccount is a concrete implementation of the HandleAccount method in the AccountHandler interface
 func (h *accountHandler) HandleAccount(w http.ResponseWriter, r *http.Request) {
 
-	// get telemetry from request
-	tel := connect.ObtainTelemetry(r, h.logger)
-	log := h.logger.With(tel.TelemetryFields()...)
-
 	// check the method
 	switch r.Method {
 	case http.MethodGet:
-		h.getAccount(w, r, log)
+		h.getAccount(w, r)
 		return
 	case http.MethodPut:
-		h.updateAccount(w, r, log)
+		h.updateAccount(w, r)
 		return
 	default:
+		// get telemetry from request
+		tel := connect.ObtainTelemetry(r, h.logger)
+		log := h.logger.With(tel.TelemetryFields()...)
+
 		log.Error(fmt.Sprintf("unsupported method %s for endpoint %s", r.Method, r.URL.Path))
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusMethodNotAllowed,
@@ -79,7 +79,11 @@ func (h *accountHandler) HandleAccount(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleGetAccount is the concrete implementation of the method to retreive an allowance account
-func (h *accountHandler) getAccount(w http.ResponseWriter, r *http.Request, log *slog.Logger) {
+func (h *accountHandler) getAccount(w http.ResponseWriter, r *http.Request) {
+
+	// get telemetry from request
+	tel := connect.ObtainTelemetry(r, h.logger)
+	log := h.logger.With(tel.TelemetryFields()...)
 
 	// validate s2s token
 	svcToken := r.Header.Get("Service-Authorization")
@@ -157,7 +161,11 @@ func (h *accountHandler) getAccount(w http.ResponseWriter, r *http.Request, log 
 }
 
 // handleUpdateAccount is the concrete implementation of the method to update a user's specfic account
-func (h *accountHandler) updateAccount(w http.ResponseWriter, r *http.Request, log *slog.Logger) {
+func (h *accountHandler) updateAccount(w http.ResponseWriter, r *http.Request) {
+
+	// get telemetry from request
+	tel := connect.ObtainTelemetry(r, h.logger)
+	log := h.logger.With(tel.TelemetryFields()...)
 
 	// validate s2s token
 	svcToken := r.Header.Get("Service-Authorization")

@@ -52,10 +52,6 @@ type handler struct {
 // handles HTTP requests for the /permissions endpoint.
 func (h *handler) HandlePermissions(w http.ResponseWriter, r *http.Request) {
 
-	// get telemetry from request
-	tel := connect.ObtainTelemetry(r, h.logger)
-	log := h.logger.With(tel.TelemetryFields()...)
-
 	switch r.Method {
 	case http.MethodGet:
 
@@ -63,22 +59,26 @@ func (h *handler) HandlePermissions(w http.ResponseWriter, r *http.Request) {
 		slug := r.PathValue("slug")
 		if slug != "" {
 
-			h.getPermissions(w, r, log)
+			h.getPermissions(w, r)
 			return
 		} else {
 			// Handle GET request for a specific permission
-			h.getPermission(w, r, log)
+			h.getPermission(w, r)
 			return
 		}
 	case http.MethodPost:
 		// Handle POST request to create a new permission
-		h.createPermission(w, r, log)
+		h.createPermission(w, r)
 		return
 	case http.MethodPut:
 		// Handle PUT (actually a post) request to update a specific permission
-		h.updatePermission(w, r, log)
+		h.updatePermission(w, r)
 		return
 	default:
+		// get telemetry from request
+		tel := connect.ObtainTelemetry(r, h.logger)
+		log := h.logger.With(tel.TelemetryFields()...)
+
 		log.Error(fmt.Sprintf("unsupported method %s for endpoint %s", r.Method, r.URL.Path))
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusMethodNotAllowed,
@@ -90,7 +90,11 @@ func (h *handler) HandlePermissions(w http.ResponseWriter, r *http.Request) {
 }
 
 // getAllPermissions handles GET requests for the /permissions endpoint, returning all permissions from the permissions table.
-func (h *handler) getPermissions(w http.ResponseWriter, r *http.Request, log *slog.Logger) {
+func (h *handler) getPermissions(w http.ResponseWriter, r *http.Request) {
+
+	// get telemetry from request
+	tel := connect.ObtainTelemetry(r, h.logger)
+	log := h.logger.With(tel.TelemetryFields()...)
 
 	// validate the service token
 	s2sToken := r.Header.Get("Service-Authorization")
@@ -143,7 +147,11 @@ func (h *handler) getPermissions(w http.ResponseWriter, r *http.Request, log *sl
 }
 
 // getPermission handles GET requests for the /permissions/{slug} endpoint, returning a specific permission.
-func (h *handler) getPermission(w http.ResponseWriter, r *http.Request, log *slog.Logger) {
+func (h *handler) getPermission(w http.ResponseWriter, r *http.Request) {
+
+	// get telemetry from request
+	tel := connect.ObtainTelemetry(r, h.logger)
+	log := h.logger.With(tel.TelemetryFields()...)
 
 	// validate the service token
 	s2sToken := r.Header.Get("Service-Authorization")
@@ -205,7 +213,11 @@ func (h *handler) getPermission(w http.ResponseWriter, r *http.Request, log *slo
 }
 
 // createPermission handles POST requests for the /permissions endpoint, creating a new permission.
-func (h *handler) createPermission(w http.ResponseWriter, r *http.Request, log *slog.Logger) {
+func (h *handler) createPermission(w http.ResponseWriter, r *http.Request) {
+
+	// get telemetry from request
+	tel := connect.ObtainTelemetry(r, h.logger)
+	log := h.logger.With(tel.TelemetryFields()...)
 
 	// validate the service token
 	s2sToken := r.Header.Get("Service-Authorization")
@@ -301,7 +313,11 @@ func (h *handler) createPermission(w http.ResponseWriter, r *http.Request, log *
 
 // updatePermission is a helper method that implementsthe functionality for
 // PUT requests for the /permissions/{slug} endpoint, updating an existing permission.
-func (h *handler) updatePermission(w http.ResponseWriter, r *http.Request, log *slog.Logger) {
+func (h *handler) updatePermission(w http.ResponseWriter, r *http.Request) {
+
+	// get telemetry from request
+	tel := connect.ObtainTelemetry(r, h.logger)
+	log := h.logger.With(tel.TelemetryFields()...)
 
 	// validate the service token
 	s2sToken := r.Header.Get("Service-Authorization")
@@ -407,6 +423,13 @@ func (h *handler) updatePermission(w http.ResponseWriter, r *http.Request, log *
 
 	// audit log
 	var updatedFields []any
+
+	if p.Permission != record.Permission {
+		updatedFields = append(updatedFields,
+			slog.String("previous_permission", record.Permission),
+			slog.String("updated_permission", p.Permission))
+	}
+
 	if p.Name != record.Name {
 		updatedFields = append(updatedFields,
 			slog.String("previous_name", record.Name),

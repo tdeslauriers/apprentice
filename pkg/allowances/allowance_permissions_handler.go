@@ -57,18 +57,18 @@ type allowancePermissionsHandler struct {
 // It handles requests related to allowance permissions
 func (h *allowancePermissionsHandler) HandlePermissions(w http.ResponseWriter, r *http.Request) {
 
-	// get telemetry from request
-	tel := connect.ObtainTelemetry(r, h.logger)
-	log := h.logger.With(tel.TelemetryFields()...)
-
 	switch r.Method {
 	case http.MethodGet:
-		h.getAllowancePermissions(w, r, log)
+		h.getAllowancePermissions(w, r)
 		return
 	case http.MethodPost:
-		h.updateAllowancePermissions(w, r, tel, log)
+		h.updateAllowancePermissions(w, r)
 		return
 	default:
+		// get telemetry from request
+		tel := connect.ObtainTelemetry(r, h.logger)
+		log := h.logger.With(tel.TelemetryFields()...)
+
 		log.Error(fmt.Sprintf("unsupported method %s for endpoint %s", r.Method, r.URL.Path))
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusMethodNotAllowed,
@@ -80,7 +80,11 @@ func (h *allowancePermissionsHandler) HandlePermissions(w http.ResponseWriter, r
 }
 
 // getAllowancePermissions handles the retrieval of an allowance account's permissions
-func (h *allowancePermissionsHandler) getAllowancePermissions(w http.ResponseWriter, r *http.Request, log *slog.Logger) {
+func (h *allowancePermissionsHandler) getAllowancePermissions(w http.ResponseWriter, r *http.Request) {
+
+	// get telemetry from request
+	tel := connect.ObtainTelemetry(r, h.logger)
+	log := h.logger.With(tel.TelemetryFields()...)
 
 	// validate the s2s token
 	s2sToken := r.Header.Get("Service-Authorization")
@@ -155,12 +159,11 @@ func (h *allowancePermissionsHandler) getAllowancePermissions(w http.ResponseWri
 }
 
 // updateAllowancePermissions handles the updating of allowance's permissions
-func (h *allowancePermissionsHandler) updateAllowancePermissions(
-	w http.ResponseWriter,
-	r *http.Request,
-	tel *connect.Telemetry,
-	log *slog.Logger,
-) {
+func (h *allowancePermissionsHandler) updateAllowancePermissions(w http.ResponseWriter, r *http.Request) {
+
+	// get telemetry from request
+	tel := connect.ObtainTelemetry(r, h.logger)
+	log := h.logger.With(tel.TelemetryFields()...)
 
 	// add telemetry to context for downstream calls + service functions
 	ctx := context.WithValue(r.Context(), connect.TelemetryKey, tel)

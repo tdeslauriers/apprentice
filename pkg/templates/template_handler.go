@@ -76,10 +76,6 @@ type handler struct {
 // HandleTemplates is a concrete impl of a handler for all requests to the /templates endpoint
 func (h *handler) HandleTemplates(w http.ResponseWriter, r *http.Request) {
 
-	// get telemetry from request
-	tel := connect.ObtainTelemetry(r, h.logger)
-	log := h.logger.With(tel.TelemetryFields()...)
-
 	switch r.Method {
 	case http.MethodGet:
 
@@ -87,22 +83,26 @@ func (h *handler) HandleTemplates(w http.ResponseWriter, r *http.Request) {
 		slug := r.PathValue("slug")
 		switch slug {
 		case "":
-			h.getTemplates(w, r, tel, log)
+			h.getTemplates(w, r)
 			return
 		case "assignees":
-			h.getAssignees(w, r, tel, log)
+			h.getAssignees(w, r)
 			return
 		default:
-			h.getTemplate(w, r, tel, log)
+			h.getTemplate(w, r)
 			return
 		}
 	case http.MethodPost:
-		h.createTemplate(w, r, tel, log)
+		h.createTemplate(w, r)
 		return
 	case http.MethodPut:
-		h.updateTemplate(w, r, tel, log)
+		h.updateTemplate(w, r)
 		return
 	default:
+		// get telemetry from request
+		tel := connect.ObtainTelemetry(r, h.logger)
+		log := h.logger.With(tel.TelemetryFields()...)
+
 		log.Error(fmt.Sprintf("unsupported method %s for endpoint %s", r.Method, r.URL.Path))
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusMethodNotAllowed,
@@ -115,7 +115,11 @@ func (h *handler) HandleTemplates(w http.ResponseWriter, r *http.Request) {
 
 // getAssignees returns all users who may be assigned to tasks, ie the have the *:apprentice:task:* scope.
 // it makes a call to the identity service to hydrate the list with user data.
-func (h *handler) getAssignees(w http.ResponseWriter, r *http.Request, tel *connect.Telemetry, log *slog.Logger) {
+func (h *handler) getAssignees(w http.ResponseWriter, r *http.Request) {
+
+	// get telemetry from request
+	tel := connect.ObtainTelemetry(r, h.logger)
+	log := h.logger.With(tel.TelemetryFields()...)
 
 	// add telemetry to context for downstream calls + service functions
 	ctx := context.WithValue(r.Context(), connect.TelemetryKey, tel)
@@ -206,7 +210,11 @@ func (h *handler) getAssignees(w http.ResponseWriter, r *http.Request, tel *conn
 
 // getTemplates calls the template service to get all templates
 // Note: this may include calls to the identity service to hydrate the assignees records
-func (h *handler) getTemplates(w http.ResponseWriter, r *http.Request, tel *connect.Telemetry, log *slog.Logger) {
+func (h *handler) getTemplates(w http.ResponseWriter, r *http.Request) {
+
+	// get telemetry from request
+	tel := connect.ObtainTelemetry(r, h.logger)
+	log := h.logger.With(tel.TelemetryFields()...)
 
 	// add telemetry to context for downstream calls + service functions
 	ctx := context.WithValue(r.Context(), connect.TelemetryKey, tel)
@@ -319,7 +327,11 @@ func (h *handler) getTemplates(w http.ResponseWriter, r *http.Request, tel *conn
 }
 
 // createTemplate handles web requests to create a new template
-func (h *handler) createTemplate(w http.ResponseWriter, r *http.Request, tel *connect.Telemetry, log *slog.Logger) {
+func (h *handler) createTemplate(w http.ResponseWriter, r *http.Request) {
+
+	// get telemetry from request
+	tel := connect.ObtainTelemetry(r, h.logger)
+	log := h.logger.With(tel.TelemetryFields()...)
 
 	// add telemetry to context for downstream calls + service functions
 	ctx := context.WithValue(r.Context(), connect.TelemetryKey, tel)
@@ -479,7 +491,11 @@ func (h *handler) createTemplate(w http.ResponseWriter, r *http.Request, tel *co
 
 // getTemplate is a concrete impl of a handler for the GET /template/slug endpoint
 // it validates the incoming request, and then calls the template service to get a single template
-func (h *handler) getTemplate(w http.ResponseWriter, r *http.Request, tel *connect.Telemetry, log *slog.Logger) {
+func (h *handler) getTemplate(w http.ResponseWriter, r *http.Request) {
+
+	// get telemetry from request
+	tel := connect.ObtainTelemetry(r, h.logger)
+	log := h.logger.With(tel.TelemetryFields()...)
 
 	// add telemetry to context for downstream calls + service functions
 	ctx := context.WithValue(r.Context(), connect.TelemetryKey, tel)
@@ -588,7 +604,11 @@ func (h *handler) getTemplate(w http.ResponseWriter, r *http.Request, tel *conne
 
 // udpateTemplate is a concrete impl of a handler for the POST /template/slug endpoint
 // it validates the incoming request, and then calls the template service to update a template
-func (h *handler) updateTemplate(w http.ResponseWriter, r *http.Request, tel *connect.Telemetry, log *slog.Logger) {
+func (h *handler) updateTemplate(w http.ResponseWriter, r *http.Request) {
+
+	// get telemetry from request
+	tel := connect.ObtainTelemetry(r, h.logger)
+	log := h.logger.With(tel.TelemetryFields()...)
 
 	// add telemetry to context for downstream calls + service functions
 	ctx := context.WithValue(r.Context(), connect.TelemetryKey, tel)
