@@ -2,6 +2,8 @@ module github.com/tdeslauriers/apprentice
 
 go 1.24.0
 
+toolchain go1.24.4
+
 require github.com/tdeslauriers/carapace v0.2.3
 
 require (

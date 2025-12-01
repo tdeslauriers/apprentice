@@ -57,8 +57,8 @@ func (h *handler) HandlePermissions(w http.ResponseWriter, r *http.Request) {
 
 		// get slug if exists
 		slug := r.PathValue("slug")
-		if slug != "" {
-
+		if slug == "" {
+			// Handle GET request for all permissions
 			h.getPermissions(w, r)
 			return
 		} else {
