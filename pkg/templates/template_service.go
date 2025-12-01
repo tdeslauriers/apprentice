@@ -3,9 +3,9 @@ package templates
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"sync"
 	"time"
 
@@ -91,9 +91,7 @@ func (s *templateService) GetTemplates() ([]Template, error) {
 		WHERE t.is_archived = FALSE`
 	var templates []TemplateAssignee
 	if err := s.db.SelectRecords(qry, &templates); err != nil {
-		errMsg := fmt.Sprintf("failed to retrieve all templates from db: %v", err)
-		s.logger.Error(errMsg)
-		return nil, fmt.Errorf(errMsg)
+		return nil, fmt.Errorf("failed to retrieve all templates from db: %v", err)
 	}
 
 	// decrypt the allowance usernames
@@ -140,13 +138,12 @@ func (s *templateService) GetTemplates() ([]Template, error) {
 
 	// check for any decryption errors
 	if len(errChan) > 0 {
-		errs := make([]string, 0, len(errChan))
+		errs := make([]error, 0, len(errChan))
 		for err := range errChan {
-			errs = append(errs, fmt.Sprintf("%v", err))
+			errs = append(errs, err)
 		}
-		errMsg := fmt.Sprintf("failed to decrypt %d username(s) and/or allowance slugs: %v", len(errs), strings.Join(errs, "; "))
-		s.logger.Error(errMsg)
-		return nil, fmt.Errorf(errMsg)
+		return nil, fmt.Errorf("failed to decrypt %d username(s) and/or allowance slugs: %v",
+			len(errs), errors.Join(errs...))
 	}
 
 	// consolidate to unique template records with usernames slices
@@ -192,9 +189,7 @@ func (s *templateService) GetTemplate(slug string) (*Template, error) {
 	// validate slug
 	// redundant check, but good practice
 	if !validate.IsValidUuid(slug) {
-		errMsg := fmt.Sprintf("invalid template slug: %s", slug)
-		s.logger.Error(errMsg)
-		return nil, fmt.Errorf(errMsg)
+		return nil, fmt.Errorf("invalid template slug: %s", slug)
 	}
 
 	// look up the template record by slug
@@ -219,13 +214,9 @@ func (s *templateService) GetTemplate(slug string) (*Template, error) {
 	var templates []TemplateAssignee
 	if err := s.db.SelectRecords(qry, &templates, slug); err != nil {
 		if err == sql.ErrNoRows {
-			errMsg := fmt.Sprintf("template record not found for slug: %s", slug)
-			s.logger.Error(errMsg)
-			return nil, fmt.Errorf(errMsg)
+			return nil, fmt.Errorf("template record not found for slug: %s", slug)
 		}
-		errMsg := fmt.Sprintf("failed to retrieve template record from db: %v", err)
-		s.logger.Error(errMsg)
-		return nil, fmt.Errorf(errMsg)
+		return nil, fmt.Errorf("failed to retrieve template record from db: %v", err)
 	}
 
 	// decrypt the allowance usernames
@@ -263,13 +254,11 @@ func (s *templateService) GetTemplate(slug string) (*Template, error) {
 
 	// check for any decryption errors
 	if len(errChan) > 0 {
-		errs := make([]string, 0, len(errChan))
+		errs := make([]error, 0, len(errChan))
 		for err := range errChan {
-			errs = append(errs, fmt.Sprintf("%v", err))
+			errs = append(errs, err)
 		}
-		errMsg := fmt.Sprintf("failed to decrypt %d username(s): %v", len(errs), strings.Join(errs, "; "))
-		s.logger.Error(errMsg)
-		return nil, fmt.Errorf(errMsg)
+		return nil, fmt.Errorf("failed to decrypt %d username(s): %v", len(errs), errors.Join(errs...))
 	}
 
 	// consolidate to unique template record with usernames slice
@@ -363,9 +352,7 @@ func (s *templateService) UpdateTemplate(ctx context.Context, t *TemplateRecord)
 	// validate the template record
 	// redundant check, but good practice
 	if err := t.Validate(); err != nil {
-		errMsg := fmt.Sprintf("invalid template record: %v", err)
-		s.logger.Error(errMsg)
-		return fmt.Errorf(errMsg)
+		return fmt.Errorf("invalid template record: %v", err)
 	}
 
 	// update the template record in the database
@@ -437,7 +424,7 @@ func (s *templateService) DeleteAllowanceXref(ctx context.Context, t *TemplateRe
 		return fmt.Errorf("failed to delete allowance-template xref record from db: %v", err)
 	}
 
-	s.logger.Info(fmt.Sprintf("successfully deleted xref record between allowance %s and template %s", a.Username, t.Name))
+	log.Info(fmt.Sprintf("successfully deleted xref record between allowance %s and template %s", a.Username, t.Name))
 
 	return nil
 }

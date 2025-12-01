@@ -289,16 +289,12 @@ func (s *taskService) CreateTask() (*TaskRecord, error) {
 	// generate UUIDs for the task id and slug
 	id, err := uuid.NewRandom()
 	if err != nil {
-		errMsg := fmt.Sprintf("failed to generate UUID for task id: %v", err)
-		s.logger.Error(errMsg)
-		return nil, fmt.Errorf(errMsg)
+		return nil, fmt.Errorf("failed to generate UUID for task's id: %v", err)
 	}
 
 	slug, err := uuid.NewRandom()
 	if err != nil {
-		errMsg := fmt.Sprintf("failed to generate UUID for task slug: %v", err)
-		s.logger.Error(errMsg)
-		return nil, fmt.Errorf(errMsg)
+		return nil, fmt.Errorf("failed to generate UUID for task's slug: %v", err)
 	}
 
 	// create the task record
@@ -319,12 +315,8 @@ func (s *taskService) CreateTask() (*TaskRecord, error) {
 	qry := `INSERT INTO task (uuid, created_at, is_complete, completed_at, is_satisfactory, is_proactive, slug, is_archived)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 	if err := s.db.InsertRecord(qry, task); err != nil {
-		errMsg := fmt.Sprintf("failed to insert task record: %v", err)
-		s.logger.Error(errMsg)
-		return nil, fmt.Errorf(errMsg)
+		return nil, fmt.Errorf("failed to insert task record: %v", err)
 	}
-
-	s.logger.Info(fmt.Sprintf("successfully created task record with slug %s", task.Slug))
 
 	return &task, nil
 }
@@ -344,12 +336,8 @@ func (s *taskService) CreateAllowanceXref(t *TaskRecord, a *allowances.Allowance
 	qry := `INSERT INTO task_allowance (id, task_uuid, allowance_uuid, created_at)
 			VALUES (?, ?, ?, ?)`
 	if err := s.db.InsertRecord(qry, xref); err != nil {
-		errMsg := fmt.Sprintf("failed to insert task_allowance xref record: %v", err)
-		s.logger.Error(errMsg)
-		return nil, fmt.Errorf(errMsg)
+		return nil, fmt.Errorf("failed to insert task_allowance xref record: %v", err)
 	}
-
-	s.logger.Info(fmt.Sprintf("successfully created xref record between task %s and allowance %s", t.Slug, a.Username))
 
 	return &xref, nil
 }
@@ -363,8 +351,7 @@ func (s *taskService) UpdateTask(t TaskRecord) error {
 			SET is_complete = ?, completed_at = ?, is_satisfactory = ?, is_proactive = ?, is_archived = ?
 			WHERE uuid = ?`
 	if err := s.db.UpdateRecord(qry, t.IsComplete, t.CompletedAt, t.IsSatisfactory, t.IsProactive, t.IsArchived, t.Id); err != nil {
-		errMsg := fmt.Sprintf("failed to update task record: %v", err)
-		return fmt.Errorf(errMsg)
+		return fmt.Errorf("failed to update task record: %v", err)
 	}
 
 	return nil
@@ -418,9 +405,7 @@ func (s *taskService) buildTaskQuery(username string, params url.Values, permiss
 		// get user index from username (from jwt)
 		index, err := s.indexer.ObtainBlindIndex(username)
 		if err != nil {
-			errMsg := fmt.Sprintf("failed to get user index for %s: %v", username, err)
-			s.logger.Error(errMsg)
-			return "", nil, fmt.Errorf(errMsg)
+			return "", nil, fmt.Errorf("failed to get user index for %s: %v", username, err)
 		}
 
 		whereClauses = append(whereClauses, "a.user_index = ?")
