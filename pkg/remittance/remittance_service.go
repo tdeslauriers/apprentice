@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/tdeslauriers/apprentice/internal/util"
-	"github.com/tdeslauriers/shaw/pkg/user"
+	"github.com/tdeslauriers/shaw/pkg/api/user"
 
 	"github.com/tdeslauriers/carapace/pkg/connect"
 	"github.com/tdeslauriers/carapace/pkg/data"

@@ -19,7 +19,7 @@ import (
 	"github.com/tdeslauriers/carapace/pkg/jwt"
 	exo "github.com/tdeslauriers/carapace/pkg/permissions"
 	"github.com/tdeslauriers/carapace/pkg/session/provider"
-	"github.com/tdeslauriers/shaw/pkg/user"
+	"github.com/tdeslauriers/shaw/pkg/api/user"
 )
 
 var readTasksAllowed = []string{"r:apprentice:*", "r:apprentice:tasks:*"}

@@ -12,7 +12,7 @@ import (
 	"sync"
 
 	"github.com/tdeslauriers/apprentice/internal/util"
-	"github.com/tdeslauriers/shaw/pkg/user"
+	"github.com/tdeslauriers/shaw/pkg/api/user"
 
 	"github.com/tdeslauriers/apprentice/pkg/allowances"
 	"github.com/tdeslauriers/apprentice/pkg/tasks"

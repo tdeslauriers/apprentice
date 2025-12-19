@@ -8,7 +8,7 @@ import (
 
 	"github.com/tdeslauriers/carapace/pkg/data"
 	"github.com/tdeslauriers/carapace/pkg/validate"
-	"github.com/tdeslauriers/shaw/pkg/user"
+	"github.com/tdeslauriers/shaw/pkg/api/user"
 )
 
 // Service is an interface that aggregates all task services functionality

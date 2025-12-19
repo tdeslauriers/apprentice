@@ -15,7 +15,7 @@ import (
 	"github.com/tdeslauriers/carapace/pkg/data"
 	"github.com/tdeslauriers/carapace/pkg/jwt"
 	"github.com/tdeslauriers/carapace/pkg/session/provider"
-	"github.com/tdeslauriers/shaw/pkg/user"
+	"github.com/tdeslauriers/shaw/pkg/api/user"
 )
 
 // authorization

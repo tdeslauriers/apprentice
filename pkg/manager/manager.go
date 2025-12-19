@@ -148,7 +148,7 @@ func New(config *config.Config) (Manager, error) {
 		template:         templates.NewService(repository, cryptor),
 		task:             tasks.NewService(repository, indexer, cryptor),
 		permissions:      permissions.NewService(repository, indexer, cryptor),
-		cleanup:          schedule.NewCleanup(repository),
+		cleanup:          schedule.NewCleanup(db),
 
 		logger: slog.Default().
 			With(slog.String(util.ServiceKey, util.ServiceApprentice)).
