@@ -82,11 +82,20 @@ func (h *allowancesHandler) HandleAllowances(w http.ResponseWriter, r *http.Requ
 			return
 		}
 	case http.MethodPost:
-		h.createAllowance(w, r)
-		return
-	case http.MethodPut:
-		h.updateAllowance(w, r)
-		return
+
+		// get slug if exists
+		slug := r.PathValue("slug")
+		if slug == "" {
+
+			h.createAllowance(w, r)
+			return
+		} else {
+
+			// update should be a post so request body is not cached by some http clients
+			// since this is sensitive allowance account data/actions
+			h.updateAllowance(w, r)
+			return
+		}
 	default:
 		// get telemetry from request
 		tel := connect.ObtainTelemetry(r, h.logger)
@@ -605,7 +614,7 @@ func (h *allowancesHandler) updateAllowance(w http.ResponseWriter, r *http.Reque
 	}
 
 	log = log.With(updatedFields...)
-	log.Info("user successfully updated their allowance account")
+	log.Info("successfully updated allowance account")
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)

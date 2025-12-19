@@ -8,7 +8,6 @@ require github.com/tdeslauriers/carapace v0.2.5
 
 require (
 	github.com/tdeslauriers/ran v0.1.2 // indirect
-	golang.org/x/crypto v0.46.0 // indirect
 	golang.org/x/net v0.48.0 // indirect
 )
 
