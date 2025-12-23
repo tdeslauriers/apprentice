@@ -191,21 +191,48 @@ func (m *manager) Run() error {
 	mux.HandleFunc("/health", diagnostics.HealthCheckHandler)
 
 	// allowances
-	allowance := allowances.NewHandler(m.allowance, m.permissions, m.s2sVerifier, m.iamVerifier, m.s2sTokenProvider, m.identity)
+	allowance := allowances.NewHandler(
+		m.allowance,
+		m.permissions,
+		m.s2sVerifier,
+		m.iamVerifier,
+		m.s2sTokenProvider,
+		m.identity,
+	)
 	mux.HandleFunc("/account", allowance.HandleAccount)
 	mux.HandleFunc("/allowances/{slug...}", allowance.HandleAllowances)
 	mux.HandleFunc("/allowances/permissions", allowance.HandlePermissions)
 
 	// templates
-	template := templates.NewHandler(m.template, m.allowance, m.task, m.s2sVerifier, m.iamVerifier, m.s2sTokenProvider, m.identity)
+	template := templates.NewHandler(
+		m.template,
+		m.allowance,
+		m.task,
+		m.s2sVerifier,
+		m.iamVerifier,
+		m.s2sTokenProvider,
+		m.identity,
+	)
 	mux.HandleFunc("/templates/{slug...}", template.HandleTemplates)
 
 	// tasks
-	task := tasks.NewHandler(m.task, m.allowance, m.permissions, m.s2sVerifier, m.iamVerifier, m.s2sTokenProvider, m.identity)
+	task := tasks.NewHandler(
+		m.task,
+		m.allowance,
+		m.permissions,
+		m.s2sVerifier,
+		m.iamVerifier,
+		m.s2sTokenProvider,
+		m.identity,
+	)
 	mux.HandleFunc("/tasks", task.HandleTasks)
 
 	// permissions
-	permission := permissions.NewHandler(m.permissions, m.s2sVerifier, m.iamVerifier)
+	permission := permissions.NewHandler(
+		m.permissions,
+		m.s2sVerifier,
+		m.iamVerifier,
+	)
 	mux.HandleFunc("/permissions/{slug...}", permission.HandlePermissions)
 
 	managerServer := &connect.TlsServer{
