@@ -584,6 +584,7 @@ func (s *allowanceService) prepareAllowance(r AllowanceRecord) (*allowances.Allo
 	return &allowances.Allowance{
 		Id:           r.Id,
 		Balance:      balance,
+		Username:     username,
 		Slug:         slug,
 		CreatedAt:    r.CreatedAt,
 		UpdatedAt:    r.UpdatedAt,
