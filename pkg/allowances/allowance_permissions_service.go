@@ -2,6 +2,7 @@ package allowances
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -31,9 +32,9 @@ type AllowancePermissionsService interface {
 
 // NewAllowancePermissionsService creates a new AllowancePermissionsService interface
 // and returns a pointer to a concrete implementation of the interface
-func NewAllowancePermissionsService(sql data.SqlRepository, i data.Indexer, c data.Cryptor) AllowancePermissionsService {
+func NewAllowancePermissionsService(sql *sql.DB, i data.Indexer, c data.Cryptor) AllowancePermissionsService {
+
 	return &allowancePermissionsService{
-		db:         sql,
 		permission: permissions.NewService(sql, i, c),
 
 		logger: slog.Default().
@@ -44,9 +45,8 @@ func NewAllowancePermissionsService(sql data.SqlRepository, i data.Indexer, c da
 
 var _ AllowancePermissionsService = (*allowancePermissionsService)(nil)
 
+// allowancePermissionsService is the concrete implementation of the AllowancePermissionsService interface
 type allowancePermissionsService struct {
-	db data.SqlRepository
-
 	permission permissions.Service
 
 	logger *slog.Logger

@@ -26,9 +26,9 @@ type ScheduledService interface {
 }
 
 // NewScheduledService creates a new ScheduledService interface, returning a pointer to the concrete implementation
-func NewScheduledService(sql data.SqlRepository) ScheduledService {
+func NewScheduledService(sql *sql.DB) ScheduledService {
 	return &scheduledService{
-		db: sql,
+		db: NewScheduledRepository(sql),
 		// indexer: i, // indexer not needed thus far
 		// cryptor: c, // cryptor not needed thus far
 
@@ -43,7 +43,7 @@ var _ ScheduledService = (*scheduledService)(nil)
 
 // scheduledService is the concrete implementation of the ScheduledService interface
 type scheduledService struct {
-	db data.SqlRepository
+	db ScheduledRepository
 	// indexer data.Indexer // indexer not needed thus far
 	// cryptor data.Cryptor // cryptor not needed thus far
 	logger *slog.Logger
@@ -155,40 +155,26 @@ func (s *scheduledService) CreateWeeklyTasks() {
 func (s *scheduledService) generateScheduledTasks(cadence Cadence) error {
 
 	// check if tasks already created by another instance of the service
-	qry := `SELECT EXISTS
-						(SELECT 1 
-						FROM task t
-							LEFT OUTER JOIN template_task tt ON t.uuid = tt.task_uuid
-							LEFT OUTER JOIN template tem ON tt.template_uuid = tem.uuid
-						WHERE tem.cadence = ?
-							AND t.created_at >= UTC_TIMESTAMP() - INTERVAL 2 HOUR)` // using 2 hours to account for task creation jitter
-	ok, err := s.db.SelectExists(qry, string(cadence))
-	if ok {
-		s.logger.Info(fmt.Sprintf("%s tasks already created, skipping task generation", strings.ToLower(string(cadence))))
+	exists, err := s.db.TaskExistsByCadence(cadence)
+	if exists {
+		s.logger.Info(fmt.Sprintf("%s tasks already created, skipping task generation",
+			strings.ToLower(string(cadence))))
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("error selecting for existing %s tasks: %v", strings.ToLower(string(cadence)), err)
+		return fmt.Errorf("error selecting for existing %s tasks: %v",
+			strings.ToLower(string(cadence)), err)
 	}
 
 	// get the tasks for creation based on cadence
-	qry = `
-		SELECT 
-			t.uuid AS template_uuid,
-			ta.allowance_uuid AS allowance_uuid
-		FROM template t
-			LEFT OUTER JOIN template_allowance ta ON t.uuid = ta.template_uuid
-		WHERE t.cadence = ?
-			AND t.is_archived = false`
-	var toGenerate []TaskGeneration
-	if err := s.db.SelectRecords(qry, &toGenerate, string(cadence)); err != nil {
-		if err == sql.ErrNoRows {
-			s.logger.Warn("no weekly tasks/templates found for creation in db")
-			return nil
-		} else {
-			return fmt.Errorf("failed to query %s tasks for creation: %v", strings.ToLower(string(cadence)), err)
+	toGenerate, err := s.db.FindTemplates(cadence)
+	if err != nil {
+		return fmt.Errorf("failed to query %s tasks for creation: %v", strings.ToLower(string(cadence)), err)
+	}
 
-		}
+	if len(toGenerate) <= 0 {
+		s.logger.Info(fmt.Sprintf("no %s tasks to generate at this time", strings.ToLower(string(cadence))))
+		return nil
 	}
 
 	// caputre unique template uuids
@@ -231,11 +217,8 @@ func (s *scheduledService) generateScheduledTasks(cadence Cadence) error {
 			}
 
 			// create the task
-			qry = `INSERT INTO task (uuid, created_at, is_complete, completed_at, is_satisfactory, is_proactive, slug, is_archived) 
-							VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-			if err := s.db.InsertRecord(qry, task); err != nil {
+			if err := s.db.InsertTaskRecord(task); err != nil {
 				return fmt.Errorf("failed to create %s task in database: %v", strings.ToLower(string(cadence)), err)
-
 			}
 
 			// create the template-task xref
@@ -246,10 +229,9 @@ func (s *scheduledService) generateScheduledTasks(cadence Cadence) error {
 				CreatedAt:  data.CustomTime{Time: time.Now().UTC()},
 			}
 
-			qry = `INSERT INTO template_task (id, template_uuid, task_uuid, created_at)
-							VALUES (?, ?, ?, ?)`
-			if err := s.db.InsertRecord(qry, ttXref); err != nil {
-				s.logger.Error(fmt.Sprintf("failed to create template-task xref in database for %s task generation: %v", strings.ToLower(string(cadence)), err))
+			if err := s.db.InsertTemplateTaskXref(ttXref); err != nil {
+				s.logger.Error(fmt.Sprintf("failed to create template-task xref in database for %s task generation: %v",
+					strings.ToLower(string(cadence)), err))
 			}
 
 			// create the task-allowance xref
@@ -262,13 +244,13 @@ func (s *scheduledService) generateScheduledTasks(cadence Cadence) error {
 				},
 			}
 
-			qry = `INSERT INTO task_allowance (id, task_uuid, allowance_uuid, created_at)
-							VALUES (?, ?, ?, ?)`
-			if err := s.db.InsertRecord(qry, taXref); err != nil {
-				s.logger.Error(fmt.Sprintf("failed to create task-allowance xref in database for %s task generation: %v", strings.ToLower(string(cadence)), err))
+			if err := s.db.InsertTaskAllowanceXref(taXref); err != nil {
+				s.logger.Error(fmt.Sprintf("failed to create task-allowance xref in database for %s task generation: %v",
+					strings.ToLower(string(cadence)), err))
 			}
 
-			s.logger.Info(fmt.Sprintf("created %s task %s for template %s and allowance %s", strings.ToLower(string(cadence)), task.Id, templateId, allowanceId))
+			s.logger.Info(fmt.Sprintf("created %s task %s for template %s and allowance %s",
+				strings.ToLower(string(cadence)), task.Id, templateId, allowanceId))
 		}
 	}
 	return nil

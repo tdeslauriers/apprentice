@@ -143,11 +143,11 @@ func New(config *config.Config) (Manager, error) {
 		s2sVerifier:      jwt.NewVerifier(config.ServiceName, s2sPublicKey),
 		iamVerifier:      jwt.NewVerifier(config.ServiceName, iamPublicKey),
 		identity:         identity,
-		allowance:        allowances.NewService(repository, indexer, cryptor),
-		remittance:       remittance.NewService(repository, indexer, cryptor, s2sTokenProvider, identity),
-		template:         templates.NewService(repository, cryptor),
-		task:             tasks.NewService(repository, indexer, cryptor),
-		permissions:      permissions.NewService(repository, indexer, cryptor),
+		allowance:        allowances.NewService(db, indexer, cryptor),
+		remittance:       remittance.NewService(db, indexer, cryptor, s2sTokenProvider, identity),
+		template:         templates.NewService(db, cryptor),
+		task:             tasks.NewService(db, indexer, cryptor),
+		permissions:      permissions.NewService(db, indexer, cryptor),
 		cleanup:          schedule.NewCleanup(db),
 
 		logger: slog.Default().

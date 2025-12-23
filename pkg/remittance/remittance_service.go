@@ -2,6 +2,7 @@ package remittance
 
 import (
 	"context"
+	"database/sql"
 	"encoding/binary"
 	"fmt"
 	"log/slog"
@@ -26,9 +27,9 @@ type Service interface {
 }
 
 // NewRemittanceService creates a new RemittanceService interface, returning a pointer to the concrete implementation
-func NewService(sql data.SqlRepository, i data.Indexer, c data.Cryptor, tkn provider.S2sTokenProvider, iam *connect.S2sCaller) Service {
+func NewService(sql *sql.DB, i data.Indexer, c data.Cryptor, tkn provider.S2sTokenProvider, iam *connect.S2sCaller) Service {
 	return &service{
-		sql:     sql,
+		sql:     NewRemittanceRepository(sql),
 		indexer: i,
 		cryptor: c,
 		tkn:     tkn,
@@ -44,7 +45,7 @@ var _ Service = (*service)(nil)
 
 // service is the concrete implementation of the RemittanceService interface
 type service struct {
-	sql     data.SqlRepository
+	sql     RemittanceRepository
 	indexer data.Indexer
 	cryptor data.Cryptor
 	tkn     provider.S2sTokenProvider
@@ -105,28 +106,8 @@ func (s *service) Disburse() {
 
 			// get allowances and check if they were updated within
 			// the last 1 hour (because disbursement is weekly)
-			qry := `SELECT 
-						a.uuid AS allowance_uuid,
-						a.username,
-						a.balance,
-						t.uuid AS task_uuid,
-						t.is_complete,
-						t.is_satisfactory,
-						t.is_proactive
-					FROM allowance a
-						LEFT OUTER JOIN task_allowance ta ON a.uuid = ta.allowance_uuid
-						LEFT OUTER JOIN task t ON ta.task_uuid = t.uuid
-						LEFT OUTER JOIN template_task tt ON t.uuid = tt.task_uuid
-						LEFT OUTER JOIN template tem ON tt.template_uuid = tem.uuid
-					WHERE a.updated_at < ? - INTERVAL 1 HOUR
-						AND a.is_active = TRUE
-						AND a.is_calculated = TRUE
-						AND tem.is_calculated = TRUE
-						AND tem.is_archived = FALSE
-						AND a.is_archived = FALSE
-						AND t.created_at > ? - INTERVAL 7 DAY + INTERVAL 1 HOUR` // accounts for task creation jitter
-			var records []RemittanceTask
-			if err := s.sql.SelectRecords(qry, &records, now.UTC(), now.UTC()); err != nil {
+			records, err := s.sql.FindForRemit(now)
+			if err != nil {
 				log.Error("failed to select remittance tasks from db", "err", err.Error())
 				continue
 			}
@@ -176,19 +157,19 @@ func (s *service) Disburse() {
 			}
 
 			// calculate the disbursement for each allowance
-			for allowance, tasks := range allowances {
+			for allowanceId, remitTasks := range allowances {
 
 				// check if tasks length is 0
-				if len(tasks) < 1 {
-					log.Warn(fmt.Sprintf("no tasks found for allowance %s, skipping disbursement", allowance))
+				if len(remitTasks) < 1 {
+					log.Warn(fmt.Sprintf("no tasks found for allowance %s, skipping disbursement", allowanceId))
 					continue // skip this allowance calculation
 				}
 
 				// get the username and decrypt it
 				// can be taken from the first task because the username is the same for all tasks
-				clearUsername, err := s.cryptor.DecryptServiceData(tasks[0].Username)
+				clearUsername, err := s.cryptor.DecryptServiceData(remitTasks[0].Username)
 				if err != nil {
-					log.Error(fmt.Sprintf("failed to decrypt username for allowance %s", allowance),
+					log.Error(fmt.Sprintf("failed to decrypt username for allowance %s", allowanceId),
 						"err", err.Error())
 					continue // skip this allowance and try the next one
 				}
@@ -197,7 +178,7 @@ func (s *service) Disburse() {
 				u := userMap[string(clearUsername)]
 				dob, err := time.Parse("2006-01-02", u.BirthDate)
 				if err != nil {
-					log.Error(fmt.Sprintf("failed to parse birthdate for allowance %s", allowance),
+					log.Error(fmt.Sprintf("failed to parse birthdate for allowance %s", allowanceId),
 						"err", err.Error())
 					continue // skip this allowance and try the next one
 				}
@@ -208,11 +189,11 @@ func (s *service) Disburse() {
 
 				// divide the age by the number of tasks to get the disbursement per task
 				// this is a simple calculation, but could be more complex in the future
-				rate := total / int64(len(tasks))    // rate is in cents
-				remainder := age % int64(len(tasks)) // remainder is in cents
+				rate := total / int64(len(remitTasks))    // rate is in cents
+				remainder := age % int64(len(remitTasks)) // remainder is in cents
 
 				var earned int64 = 0
-				for _, task := range tasks {
+				for _, task := range remitTasks {
 
 					var perTask int64 = 0
 					// check if the task is complete
@@ -250,9 +231,9 @@ func (s *service) Disburse() {
 
 				// get the balance and decrypt it
 				// can be taken from the first task because the balance is the same for all tasks
-				clearBalance, err := s.cryptor.DecryptServiceData(tasks[0].Balance)
+				clearBalance, err := s.cryptor.DecryptServiceData(remitTasks[0].Balance)
 				if err != nil {
-					log.Error(fmt.Sprintf("failed to decrypt balance for allowance %s", allowance),
+					log.Error(fmt.Sprintf("failed to decrypt balance for allowance %s", allowanceId),
 						"err", err.Error())
 					continue // skip this allowance and try the next one
 				}
@@ -269,24 +250,20 @@ func (s *service) Disburse() {
 				// encrypt the new balance
 				encBalance, err := s.cryptor.EncryptServiceData(buf)
 				if err != nil {
-					log.Error(fmt.Sprintf("failed to encrypt updated balance for allowance %s", allowance),
+					log.Error(fmt.Sprintf("failed to encrypt updated balance for allowance %s", allowanceId),
 						"err", err.Error())
 					continue // skip this allowance and try the next one
 				}
 
 				// update the allowance balance in the db
-				qry = `
-						UPDATE allowance
-						SET balance = ?, 
-							updated_at = UTC_TIMESTAMP()
-						WHERE uuid = ?`
-				if err := s.sql.UpdateRecord(qry, encBalance, allowance); err != nil {
-					s.logger.Error(fmt.Sprintf("failed to update balance for allowance %s in db", allowance),
+
+				if err := s.sql.UpdateBalance(encBalance, allowanceId); err != nil {
+					s.logger.Error(fmt.Sprintf("failed to update balance for allowance %s in db", allowanceId),
 						"err", err.Error())
 					continue // skip this allowance and try the next one
 				}
 
-				log.Info(fmt.Sprintf("disbursed %.2f to allowance %s", float64(earned)/100, allowance),
+				log.Info(fmt.Sprintf("disbursed %.2f to allowance %s", float64(earned)/100, allowanceId),
 					slog.String("previous_balance", fmt.Sprintf("%.2f", float64(balance-uint64(earned))/100)),
 					slog.String("new_balance", fmt.Sprintf("%.2f", float64(balance)/100)),
 				)

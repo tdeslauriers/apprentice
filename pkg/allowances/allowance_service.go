@@ -47,9 +47,9 @@ type AllowanceService interface {
 }
 
 // NewAllowanceService creates a new Service interface, returning a pointer to the concrete implementation
-func NewAllowanceService(sql data.SqlRepository, i data.Indexer, c data.Cryptor) AllowanceService {
+func NewAllowanceService(sql *sql.DB, i data.Indexer, c data.Cryptor) AllowanceService {
 	return &allowanceService{
-		sql:        sql,
+		sql:        NewAllowanceRepository(sql),
 		indexer:    i,
 		cryptor:    c,
 		permission: permissions.NewService(sql, i, c),
@@ -64,7 +64,7 @@ var _ AllowanceService = (*allowanceService)(nil)
 
 // allowanceService is the concrete implementation of the Service interface
 type allowanceService struct {
-	sql        data.SqlRepository
+	sql        AllowanceRepository
 	indexer    data.Indexer
 	cryptor    data.Cryptor
 	permission permissions.Service
@@ -76,23 +76,8 @@ type allowanceService struct {
 func (s *allowanceService) GetAllowances() ([]Allowance, error) {
 
 	// get all allowance accounts
-	qry := `
-		SELECT 
-			uuid, 
-			balance, 
-			username,
-			user_index,
-			slug, 
-			slug_index,
-			created_at,
-			updated_at,
-			is_archived, 
-			is_active, 
-			is_calculated
-		FROM allowance`
-
-	var records []AllowanceRecord
-	if err := s.sql.SelectRecords(qry, &records); err != nil {
+	records, err := s.sql.FindAll()
+	if err != nil {
 		return nil, fmt.Errorf("failed to retrieve all allowance accounts: %v", err)
 	}
 
@@ -159,31 +144,13 @@ func (s *allowanceService) GetBySlug(slug string) (*Allowance, error) {
 	}
 
 	// get allowance account
-	qry := `
-		SELECT 
-			uuid, 
-			balance, 
-			username,
-			user_index,
-			slug, 
-			slug_index,
-			created_at,
-			updated_at,
-			is_archived, 
-			is_active, 
-			is_calculated
-		FROM allowance
-		WHERE slug_index = ?`
-	var record AllowanceRecord
-	if err := s.sql.SelectRecord(qry, &record, index); err != nil {
-		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("%s for slug %s", ErrAllowanceNotFound, slug)
-		}
+	record, err := s.sql.FindBySlugIndex(index)
+	if err != nil {
 		return nil, fmt.Errorf("failed to retrieve allowance account for slug %s: %v", slug, err)
 	}
 
 	// decrypt and convert to clear text model
-	a, err := s.prepareAllowance(record)
+	a, err := s.prepareAllowance(*record)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt/prepare allowance account %s: %v", record.Id, err)
 	}
@@ -214,23 +181,8 @@ func (s *allowanceService) GetByUser(username string) (*Allowance, error) {
 	}
 
 	// get allowance account
-	qry := `
-		SELECT 
-			uuid, 
-			balance, 
-			username,
-			user_index,
-			slug, 
-			slug_index,
-			created_at,
-			updated_at,
-			is_archived, 
-			is_active, 
-			is_calculated
-		FROM allowance
-		WHERE user_index = ?`
-	var record AllowanceRecord
-	if err := s.sql.SelectRecord(qry, &record, index); err != nil {
+	record, err := s.sql.FindByUserIndex(index)
+	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("%s for username %s", ErrAllowanceNotFound, username)
 		}
@@ -238,7 +190,7 @@ func (s *allowanceService) GetByUser(username string) (*Allowance, error) {
 	}
 
 	// decrypt and convert to clear text model
-	a, err := s.prepareAllowance(record)
+	a, err := s.prepareAllowance(*record)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt/prepare allowance account %s: %v", record.Id, err)
 	}
@@ -254,14 +206,19 @@ func (s *allowanceService) GetByUser(username string) (*Allowance, error) {
 	return a, nil
 }
 
-// GetByUsers is the concrete implementation of the Service interface method GetByUsers
+// GetValidUsers is the concrete implementation of the Service interface method GetValidUsers
 // It will error if any of the users does not exist in the database.
 func (s *allowanceService) GetValidUsers(users []string) ([]Allowance, []string, error) {
+
+	// handle empty input
+	if len(users) == 0 {
+		return nil, nil, errors.New("users slice cannot be empty.")
+	}
 
 	// validate usernames
 	for _, user := range users {
 		if err := validate.IsValidEmail(user); err != nil {
-			return nil, nil, fmt.Errorf("%s: %v", ErrInvalidUsername, err)
+			return nil, nil, fmt.Errorf("%s: %w", ErrInvalidUsername, err)
 		}
 	}
 
@@ -270,48 +227,23 @@ func (s *allowanceService) GetValidUsers(users []string) ([]Allowance, []string,
 	for i, user := range users {
 		ind, err := s.indexer.ObtainBlindIndex(user)
 		if err != nil {
-			return nil, nil, fmt.Errorf("%s for username %s: %v", ErrGenIndex, user, err)
+			return nil, nil, fmt.Errorf("%s for username %s: %w", ErrGenIndex, user, err)
 		}
 		userIndexes[i] = ind
 	}
 
-	// convert string slice of indexes to args ...interface{}
-	placeholders := make([]string, len(userIndexes))
-	args := make([]interface{}, len(userIndexes))
-	for i, index := range userIndexes {
-		placeholders[i] = "?"
-		args[i] = index
-	}
-
-	// create placeholders for query
-
 	// get allowance accounts
 	// Note: userindexes that do not exist will not be returned, ie, ignored.
-	qry := fmt.Sprintf(`
-		SELECT 
-			uuid, 
-			balance, 
-			username,
-			user_index,
-			slug, 
-			slug_index,
-			created_at,
-			updated_at,
-			is_archived, 
-			is_active, 
-			is_calculated
-		FROM allowance
-		WHERE user_index IN (%s)`, strings.Join(placeholders, ","))
-	var records []AllowanceRecord
-	if err := s.sql.SelectRecords(qry, &records, args...); err != nil {
-		return nil, nil, fmt.Errorf("failed to retrieve allowance accounts for users: %v", err)
+	records, err := s.sql.FindUsersByIndices(userIndexes)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to retrieve allowance accounts for users: %w", err)
 	}
 
 	// decrypt and convert to clear text models
 	var (
-		wg            sync.WaitGroup
+		wg          sync.WaitGroup
 		allowanceCh = make(chan Allowance, len(records))
-		chErr         = make(chan error, len(records))
+		chErr       = make(chan error, len(records))
 	)
 
 	for _, record := range records {
@@ -322,7 +254,7 @@ func (s *allowanceService) GetValidUsers(users []string) ([]Allowance, []string,
 
 			a, err := s.prepareAllowance(r)
 			if err != nil {
-				chErr <- fmt.Errorf("failed to prepare allowance account %s: %v", r.Id, err)
+				chErr <- fmt.Errorf("failed to prepare allowance account %s: %w", r.Id, err)
 				return
 			}
 
@@ -381,8 +313,7 @@ func (s *allowanceService) CreateAllowance(username string) (*Allowance, error) 
 	}
 
 	// check if account record exists --> decryption not necessary
-	qryExists := `SELECT EXISTS(SELECT 1 FROM allowance WHERE user_index = ?) AS record_exists`
-	exists, err := s.sql.SelectExists(qryExists, userIndex)
+	exists, err := s.sql.FindExistsByUser(userIndex)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check if account record exists for username %s: %v", username, err)
 	}
@@ -513,22 +444,9 @@ func (s *allowanceService) CreateAllowance(username string) (*Allowance, error) 
 	}
 
 	// insert record into db
-	qry := `
-		INSERT INTO allowance (
-			uuid, 
-			balance, 
-			username, 
-			user_index, 
-			slug, 
-			slug_index, 
-			created_at, 
-			updated_at,
-			is_archived, 
-			is_active, 
-			is_calculated)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-	if err := s.sql.InsertRecord(qry, record); err != nil {
-		return nil, fmt.Errorf("failed to insert new allowance account record into database for username %s: %v", username, err)
+	if err := s.sql.InsertAllowance(record); err != nil {
+		return nil, fmt.Errorf("failed to insert new allowance account record into database for username %s: %v",
+			username, err)
 	}
 
 	// return clear text allowance account model
@@ -570,20 +488,21 @@ func (s *allowanceService) UpdateAllowance(cmd *Allowance) error {
 	// encrypt balance
 	encBal, err := s.cryptor.EncryptServiceData(buf)
 	if err != nil {
-		return fmt.Errorf("failed to encrypt balance for updating allowance account id %s, slug %s: %v", cmd.Id, cmd.Slug, err)
+		return fmt.Errorf("failed to encrypt balance for updating allowance account id %s, slug %s: %v",
+			cmd.Id, cmd.Slug, err)
 	}
 
 	// update account record
-	qry := `
-		UPDATE allowance
-		SET balance = ?,
-			updated_at = ?,
-			is_archived = ?,
-			is_active = ?,
-			is_calculated = ?
-		WHERE slug_index = ?`
-	if err := s.sql.UpdateRecord(qry, encBal, cmd.UpdatedAt, cmd.IsArchived, cmd.IsActive, cmd.IsCalculated, index); err != nil {
-		return fmt.Errorf("failed to update allowance account record for id %s, slug %s: %v", cmd.Id, cmd.Slug, err)
+	if err := s.sql.UpdateAllowance(AllowanceRecord{
+		Balance:      encBal,           // to update
+		SlugIndex:    index,            // for lookup/WHERE clause
+		UpdatedAt:    cmd.UpdatedAt,    // to update
+		IsArchived:   cmd.IsArchived,   // to update
+		IsActive:     cmd.IsActive,     // to update
+		IsCalculated: cmd.IsCalculated, // to update
+	}); err != nil {
+		return fmt.Errorf("failed to update allowance account record for id %s, slug %s: %v",
+			cmd.Id, cmd.Slug, err)
 	}
 
 	return nil

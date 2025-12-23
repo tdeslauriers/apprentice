@@ -1,6 +1,8 @@
 package permissions
 
 import (
+	"database/sql"
+
 	"github.com/tdeslauriers/carapace/pkg/data"
 	exo "github.com/tdeslauriers/carapace/pkg/permissions"
 )
@@ -13,7 +15,7 @@ type Service interface {
 
 // NewService creates a new Service interface
 // and returns a pointer to a concrete implementations of the interfaces
-func NewService(sql data.SqlRepository, i data.Indexer, c data.Cryptor) Service {
+func NewService(sql *sql.DB, i data.Indexer, c data.Cryptor) Service {
 	return &service{
 		Service:                     exo.NewService(sql, i, c),
 		AllowancePermissionsService: NewAllowancePermissionsService(sql, i, c),

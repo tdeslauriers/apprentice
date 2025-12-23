@@ -19,7 +19,7 @@ type Service interface {
 }
 
 // NewService creates a new Service interface, returning a pointer to the concrete implementation
-func NewService(sql data.SqlRepository, i data.Indexer, c data.Cryptor) Service {
+func NewService(sql *sql.DB, i data.Indexer, c data.Cryptor) Service {
 	return &service{
 		TaskService:      NewTaskService(sql, i, c),
 		TaskErrorService: NewTaskErrorService(),

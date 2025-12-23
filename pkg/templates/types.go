@@ -1,6 +1,7 @@
 package templates
 
 import (
+	"database/sql"
 	"fmt"
 	"strings"
 
@@ -16,7 +17,7 @@ type Service interface {
 }
 
 // NewService creates a new Service interface, returning a pointer to the concrete implementation
-func NewService(sql data.SqlRepository, c data.Cryptor) Service {
+func NewService(sql *sql.DB, c data.Cryptor) Service {
 	return &service{
 		TemplateService:      NewTemplateService(sql, c),
 		TemplateErrorService: NewTemplateErrorService(),

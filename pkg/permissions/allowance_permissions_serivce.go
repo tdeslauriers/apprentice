@@ -1,6 +1,7 @@
 package permissions
 
 import (
+	"database/sql"
 	"fmt"
 	"log/slog"
 	"time"
@@ -28,9 +29,9 @@ type AllowancePermissionsService interface {
 
 // NewAllowancePermissionsService creates a new AllowancePermissionsService interface
 // and retunrs a pointer to a concerte implementation of the interface
-func NewAllowancePermissionsService(sql data.SqlRepository, i data.Indexer, c data.Cryptor) AllowancePermissionsService {
+func NewAllowancePermissionsService(sql *sql.DB, i data.Indexer, c data.Cryptor) AllowancePermissionsService {
 	return &allowancePermissionsService{
-		db:      sql,
+		db:      NewAllowancePermissionsRepository(sql),
 		indexer: i,
 		cryptor: exo.NewPermissionCryptor(c),
 
@@ -41,7 +42,7 @@ func NewAllowancePermissionsService(sql data.SqlRepository, i data.Indexer, c da
 var _ AllowancePermissionsService = (*allowancePermissionsService)(nil)
 
 type allowancePermissionsService struct {
-	db      data.SqlRepository
+	db      AllowancePermissionsRepository
 	indexer data.Indexer
 	cryptor exo.PermissionCryptor
 
@@ -66,25 +67,9 @@ func (s *allowancePermissionsService) GetAllowancePermissions(username string) (
 		return nil, nil, err
 	}
 
-	// get permissions for user in allowance table
-	query := `
-		SELECT
-			p.uuid,
-			p.service_name,
-			p.permission,
-			p.name,
-			p.description,
-			p.created_at,
-			p.active,
-			p.slug,
-			p.slug_index
-		FROM permission p
-			LEFT OUTER JOIN allowance_permission ap ON p.uuid = ap.permission_uuid
-			LEFT OUTER JOIN allowance a ON ap.allowance_uuid = a.uuid
-		WHERE a.user_index = ?
-			AND p.active = true`
-	var ps []exo.PermissionRecord
-	if err := s.db.SelectRecords(query, &ps, index); err != nil {
+	// get permissions for user from database by user index
+	ps, err := s.db.FindAllowancePermissions(index)
+	if err != nil {
 		return nil, nil, err
 	}
 
@@ -130,8 +115,7 @@ func (s *allowancePermissionsService) AddPermissionToAllowance(allowanceId, perm
 	}
 
 	// insert the xref record into the database
-	qry := `INSERT INTO allowance_permission (id, allowance_uuid, permission_uuid, created_at) VALUES (?, ?, ?, ?)`
-	if err := s.db.InsertRecord(qry, xref); err != nil {
+	if err := s.db.InsertAllowancePermissionXref(xref); err != nil {
 		return fmt.Errorf("failed to add permission %s to allowance %s: %v", permissionId, allowanceId, err)
 	}
 
@@ -151,8 +135,7 @@ func (s *allowancePermissionsService) RemovePermissionFromAllowance(allowanceId,
 	}
 
 	// delete the xref record from the database
-	qry := `DELETE FROM allowance_permission WHERE allowance_uuid = ? AND permission_uuid = ?`
-	if err := s.db.DeleteRecord(qry, allowanceId, permissionId); err != nil {
+	if err := s.db.DeleteAllowancePermissionXref(allowanceId, permissionId); err != nil {
 		return err
 	}
 

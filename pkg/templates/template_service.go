@@ -46,9 +46,9 @@ type TemplateService interface {
 }
 
 // NewService creates a new Service interface, returning a pointer to the concrete implementation
-func NewTemplateService(sql data.SqlRepository, c data.Cryptor) TemplateService {
+func NewTemplateService(sql *sql.DB, c data.Cryptor) TemplateService {
 	return &templateService{
-		db:      sql,
+		db:      NewTemplateRepository(sql),
 		cryptor: c,
 
 		logger: slog.Default().
@@ -62,7 +62,7 @@ var _ TemplateService = (*templateService)(nil)
 
 // service is the concrete implementation of the Service interface
 type templateService struct {
-	db      data.SqlRepository
+	db      TemplateRepository
 	cryptor data.Cryptor // needed for decrypting allowance db record data in join queries
 
 	logger *slog.Logger
@@ -72,25 +72,9 @@ type templateService struct {
 // it retrieves all active task templates from the database including their assignees
 func (s *templateService) GetTemplates() ([]Template, error) {
 
-	qry := `
-		SELECT 
-			t.uuid, 
-			t.name, 
-			t.description, 
-			t.cadence, 
-			t.category, 
-			t.is_calculated,
-			t.slug AS template_slug, 
-			t.created_at, 
-			t.is_archived,
-			a.username,
-			a.slug AS allowance_slug
-		FROM template t 
-			LEFT OUTER JOIN template_allowance ta ON t.uuid = ta.template_uuid
-			LEFT OUTER JOIN allowance a ON ta.allowance_uuid = a.uuid
-		WHERE t.is_archived = FALSE`
-	var templates []TemplateAssignee
-	if err := s.db.SelectRecords(qry, &templates); err != nil {
+	// get all active templates (including assignee) from the database
+	templates, err := s.db.FindActiveTemplates()
+	if err != nil {
 		return nil, fmt.Errorf("failed to retrieve all templates from db: %v", err)
 	}
 
@@ -193,58 +177,37 @@ func (s *templateService) GetTemplate(slug string) (*Template, error) {
 	}
 
 	// look up the template record by slug
-	qry := `
-	SELECT 
-		t.uuid, 
-		t.name, 
-		t.description, 
-		t.cadence, 
-		t.category, 
-		t.is_calculated,
-		t.slug AS template_slug, 
-		t.created_at, 
-		t.is_archived,
-		a.username,
-		a.slug AS allowance_slug
-	FROM template t 
-		LEFT OUTER JOIN template_allowance ta ON t.uuid = ta.template_uuid
-		LEFT OUTER JOIN allowance a ON ta.allowance_uuid = a.uuid
-		WHERE t.slug = ?`
-	// need to look up as slice because of join/more than one user could be assigned
-	var templates []TemplateAssignee
-	if err := s.db.SelectRecords(qry, &templates, slug); err != nil {
-		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("template record not found for slug: %s", slug)
-		}
-		return nil, fmt.Errorf("failed to retrieve template record from db: %v", err)
+	templateAssignees, err := s.db.FindTemplateAssignees(slug)
+	if err != nil {
+		return nil, err
 	}
 
 	// decrypt the allowance usernames
 	var (
 		wg      sync.WaitGroup
-		errChan = make(chan error, len(templates))
+		errChan = make(chan error, len(templateAssignees))
 	)
 
-	for i := range templates {
+	for i := range templateAssignees {
 		wg.Add(1)
 		go func(index int, ch chan error, wg *sync.WaitGroup) {
 			defer wg.Done()
 
 			// decrypt username
-			username, err := s.cryptor.DecryptServiceData(templates[index].Username)
+			username, err := s.cryptor.DecryptServiceData(templateAssignees[index].Username)
 			if err != nil {
 				ch <- fmt.Errorf("%v", err)
 				return
 			}
-			templates[index].Username = string(username)
+			templateAssignees[index].Username = string(username)
 
 			// decrypt allowance slug
-			slug, err := s.cryptor.DecryptServiceData(templates[index].AllowanceSlug)
+			slug, err := s.cryptor.DecryptServiceData(templateAssignees[index].AllowanceSlug)
 			if err != nil {
 				ch <- fmt.Errorf("%v", err)
 				return
 			}
-			templates[index].AllowanceSlug = string(slug)
+			templateAssignees[index].AllowanceSlug = string(slug)
 
 		}(i, errChan, &wg)
 	}
@@ -263,18 +226,18 @@ func (s *templateService) GetTemplate(slug string) (*Template, error) {
 
 	// consolidate to unique template record with usernames slice
 	uniqueTemplate := Template{
-		Id:           templates[0].Id,
-		Name:         templates[0].Name,
-		Description:  templates[0].Description,
-		Cadence:      templates[0].Cadence,
-		Category:     templates[0].Category,
-		IsCalculated: templates[0].IsCalculated,
-		Slug:         templates[0].TemplateSlug,
-		CreatedAt:    templates[0].CreatedAt,
-		IsArchived:   templates[0].IsArchived,
+		Id:           templateAssignees[0].Id,
+		Name:         templateAssignees[0].Name,
+		Description:  templateAssignees[0].Description,
+		Cadence:      templateAssignees[0].Cadence,
+		Category:     templateAssignees[0].Category,
+		IsCalculated: templateAssignees[0].IsCalculated,
+		Slug:         templateAssignees[0].TemplateSlug,
+		CreatedAt:    templateAssignees[0].CreatedAt,
+		IsArchived:   templateAssignees[0].IsArchived,
 		Assignees:    make([]Assignee, 0),
 	}
-	for _, t := range templates {
+	for _, t := range templateAssignees {
 
 		uniqueTemplate.Assignees = append(uniqueTemplate.Assignees, Assignee{
 			Username:      t.Username,
@@ -327,9 +290,7 @@ func (s *templateService) CreateTemplate(ctx context.Context, cmd TemplateCmd) (
 		IsArchived:  false,
 	}
 
-	qry := `INSERT INTO template (uuid, name, description, cadence, category, is_calculated, slug, created_at, is_archived)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-	if err := s.db.InsertRecord(qry, t); err != nil {
+	if err := s.db.InsertTemplate(t); err != nil {
 		return nil, fmt.Errorf("failed to insert template record in to db: %v", err)
 	}
 
@@ -356,15 +317,7 @@ func (s *templateService) UpdateTemplate(ctx context.Context, t *TemplateRecord)
 	}
 
 	// update the template record in the database
-	qry := `UPDATE template
-			SET name = ?, 
-				description = ?, 
-				cadence = ?, 
-				category = ?, 
-				is_calculated = ?, 
-				is_archived = ?
-			WHERE uuid = ?`
-	if err := s.db.UpdateRecord(qry, t.Name, t.Description, t.Cadence, t.Category, t.IsCalculated, t.IsArchived, t.Id); err != nil {
+	if err := s.db.UpdateTemplate(*t); err != nil {
 		return fmt.Errorf("failed to update template record in db: %v", err)
 	}
 
@@ -395,9 +348,7 @@ func (s *templateService) CreateAllowanceXref(
 		CreatedAt:   data.CustomTime{Time: time.Now().UTC()},
 	}
 
-	qry := `INSERT INTO template_allowance ( template_uuid, allowance_uuid, created_at)
-			VALUES (?, ?, ?)`
-	if err := s.db.InsertRecord(qry, xref); err != nil {
+	if err := s.db.InsertTemplateAllowanceXref(xref); err != nil {
 		return nil, fmt.Errorf("failed to insert allowance-template xref record in to db: %v", err)
 	}
 
@@ -418,9 +369,7 @@ func (s *templateService) DeleteAllowanceXref(ctx context.Context, t *TemplateRe
 	}
 
 	// delete the xref record from the database
-	qry := `DELETE FROM template_allowance 
-			WHERE template_uuid = ? AND allowance_uuid = ?`
-	if err := s.db.DeleteRecord(qry, t.Id, a.Id); err != nil {
+	if err := s.db.DeleteTemplateAllowanceXref(t.Id, a.Id); err != nil {
 		return fmt.Errorf("failed to delete allowance-template xref record from db: %v", err)
 	}
 
@@ -447,9 +396,7 @@ func (s *templateService) CreateTaskXref(ctx context.Context, t *TemplateRecord,
 		CreatedAt:  data.CustomTime{Time: time.Now().UTC()},
 	}
 
-	qry := `INSERT INTO template_task ( template_uuid, task_uuid, created_at)
-			VALUES (?, ?, ?)`
-	if err := s.db.InsertRecord(qry, xref); err != nil {
+	if err := s.db.InsertTemplateTaskXref(xref); err != nil {
 		return nil, fmt.Errorf("failed to insert template-task xref record in to db: %v", err)
 	}
 

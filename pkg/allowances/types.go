@@ -1,6 +1,7 @@
 package allowances
 
 import (
+	"database/sql"
 	"fmt"
 
 	"github.com/tdeslauriers/apprentice/pkg/permissions"
@@ -69,7 +70,7 @@ type Service interface {
 }
 
 // NewService creates a new Service interface, returning a pointer to the concrete implementation
-func NewService(sql data.SqlRepository, i data.Indexer, c data.Cryptor) Service {
+func NewService(sql *sql.DB, i data.Indexer, c data.Cryptor) Service {
 	return &service{
 		AllowancePermissionsService: NewAllowancePermissionsService(sql, i, c),
 		AllowanceService:            NewAllowanceService(sql, i, c),
