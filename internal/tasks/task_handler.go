@@ -136,7 +136,7 @@ func (h *handler) getTasks(w http.ResponseWriter, r *http.Request) {
 	params := r.URL.Query()
 	if len(params) > 0 {
 		// validate query params
-		if err := ValidateQueryParams(params); err != nil {
+		if err := api.ValidateQueryParams(params); err != nil {
 			log.Error("invalid query params", "err", err.Error())
 			e := connect.ErrorHttp{
 				StatusCode: http.StatusUnprocessableEntity,

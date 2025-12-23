@@ -180,7 +180,7 @@ func (s *taskAdapter) buildTaskQuery(
 ) (string, []interface{}, error) {
 
 	// validate params: redundant, but good practice.
-	if err := ValidateQueryParams(params); err != nil {
+	if err := tasks.ValidateQueryParams(params); err != nil {
 		return "", nil, err
 	}
 
