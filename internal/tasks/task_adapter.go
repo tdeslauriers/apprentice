@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/tdeslauriers/apprentice/internal/util"
+	"github.com/tdeslauriers/apprentice/pkg/api/tasks"
 	"github.com/tdeslauriers/carapace/pkg/data"
 	exo "github.com/tdeslauriers/carapace/pkg/permissions"
 )
@@ -21,10 +22,10 @@ type TaskRepository interface {
 		username string,
 		params url.Values,
 		permissions map[string]exo.PermissionRecord,
-	) ([]TaskData, error)
+	) ([]tasks.TaskData, error)
 
 	// FindTaskBySlug retrieves a Task record and its associated Template data by the task's slug.
-	FindTaskBySlug(slug string) (*TaskData, error)
+	FindTaskBySlug(slug string) (*tasks.TaskData, error)
 
 	// InsertTask adds a new task record to the database.
 	InsertTask(record TaskRecord) error
@@ -64,7 +65,7 @@ func (s *taskAdapter) FindTasksByParams(
 	username string,
 	params url.Values,
 	permissions map[string]exo.PermissionRecord,
-) ([]TaskData, error) {
+) ([]tasks.TaskData, error) {
 
 	// build the query based on params and permissions
 	query, args, err := s.buildTaskQuery(username, params, permissions)
@@ -72,11 +73,11 @@ func (s *taskAdapter) FindTasksByParams(
 		return nil, fmt.Errorf("failed to build task query: %v", err)
 	}
 
-	return data.SelectRecords[TaskData](s.db, query, args...)
+	return data.SelectRecords[tasks.TaskData](s.db, query, args...)
 }
 
 // FindTaskBySlug retrieves a Task record and its associated Template data by the task's slug.
-func (s *taskAdapter) FindTaskBySlug(slug string) (*TaskData, error) {
+func (s *taskAdapter) FindTaskBySlug(slug string) (*tasks.TaskData, error) {
 
 	qry := `
 		SELECT
@@ -101,7 +102,7 @@ func (s *taskAdapter) FindTaskBySlug(slug string) (*TaskData, error) {
 			LEFT OUTER JOIN allowance a ON ta.allowance_uuid = a.uuid
 		WHERE tsk.slug = ?`
 
-	td, err := data.SelectOneRecord[TaskData](s.db, qry, slug)
+	td, err := data.SelectOneRecord[tasks.TaskData](s.db, qry, slug)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("task record not found for slug %s", slug)

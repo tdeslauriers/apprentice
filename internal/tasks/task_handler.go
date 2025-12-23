@@ -12,9 +12,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tdeslauriers/apprentice/internal/allowances"
+	"github.com/tdeslauriers/apprentice/internal/permissions"
 	"github.com/tdeslauriers/apprentice/internal/util"
-	"github.com/tdeslauriers/apprentice/pkg/allowances"
-	"github.com/tdeslauriers/apprentice/pkg/permissions"
+	api "github.com/tdeslauriers/apprentice/pkg/api/tasks"
 	"github.com/tdeslauriers/carapace/pkg/connect"
 	"github.com/tdeslauriers/carapace/pkg/jwt"
 	exo "github.com/tdeslauriers/carapace/pkg/permissions"
@@ -217,7 +218,7 @@ func (h *handler) getTasks(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// prepare task records to return
-	tasks := make([]Task, len(records))
+	tasks := make([]api.Task, len(records))
 	for i, r := range records {
 
 		// make sure assignee exists in the map
@@ -231,7 +232,7 @@ func (h *handler) getTasks(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		tasks[i] = Task{
+		tasks[i] = api.Task{
 			Id:             r.Id,
 			Name:           r.Name,
 			Description:    r.Description,
@@ -293,7 +294,7 @@ func (h *handler) updateTaskStatus(w http.ResponseWriter, r *http.Request) {
 	log = log.With("actor", authedUser.Claims.Subject)
 
 	// decode request body
-	var cmd TaskStatusCmd
+	var cmd api.TaskStatusCmd
 	if err := json.NewDecoder(r.Body).Decode(&cmd); err != nil {
 		log.Error(fmt.Sprintf("failed to decode request body: %v", err))
 		e := connect.ErrorHttp{
@@ -319,7 +320,7 @@ func (h *handler) updateTaskStatus(w http.ResponseWriter, r *http.Request) {
 		wg        sync.WaitGroup
 		errChan   = make(chan error, 2)
 		psMapChan = make(chan map[string]exo.PermissionRecord, 1)
-		taskChan  = make(chan TaskData, 1)
+		taskChan  = make(chan api.TaskData, 1)
 	)
 
 	// get fine grain permissions map for query building

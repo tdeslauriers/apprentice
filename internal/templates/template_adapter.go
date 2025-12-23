@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 
+	"github.com/tdeslauriers/apprentice/pkg/api/templates"
 	"github.com/tdeslauriers/carapace/pkg/data"
 )
 
@@ -18,7 +19,7 @@ type TemplateRepository interface {
 	FindTemplateAssignees(slug string) ([]TemplateAssignee, error)
 
 	// InsertTemplate adds a new template record to the database.
-	InsertTemplate(record TemplateRecord) error
+	InsertTemplate(record templates.TemplateRecord) error
 
 	// InsertTemplateAllowanceXref adds a new xref record to the template_allowance table in the database.
 	InsertTemplateAllowanceXref(xref AllowanceTemplateXref) error
@@ -29,7 +30,7 @@ type TemplateRepository interface {
 	// UpdateTemplate updates an existing template record in the database.
 	// Note: This takes a record struct, but will not update all fields: only
 	// name, description, category, cadence, is_calculated, is_archived, and updated_at.
-	UpdateTemplate(record TemplateRecord) error
+	UpdateTemplate(record templates.TemplateRecord) error
 
 	// DeleteTemplateAllowanceXref removes an xref record from the template_allowance table in the database.
 	DeleteTemplateAllowanceXref(templateId, allowanceId string) error
@@ -106,7 +107,7 @@ func (a *templateAdapter) FindTemplateAssignees(slug string) ([]TemplateAssignee
 }
 
 // InsertTemplate adds a new template record to the database.
-func (a *templateAdapter) InsertTemplate(record TemplateRecord) error {
+func (a *templateAdapter) InsertTemplate(record templates.TemplateRecord) error {
 
 	qry := `
 		INSERT INTO template (
@@ -155,7 +156,7 @@ func (a *templateAdapter) InsertTemplateTaskXref(xref TemplateTaskXref) error {
 // UpdateTemplate updates an existing template record in the database.
 // Note: This takes a record struct, but will not update all fields: only
 // name, description, category, cadence, is_calculated, is_archived, and updated_at.
-func (a *templateAdapter) UpdateTemplate(record TemplateRecord) error {
+func (a *templateAdapter) UpdateTemplate(record templates.TemplateRecord) error {
 
 	qry := `
 		UPDATE template SET 

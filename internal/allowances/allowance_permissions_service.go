@@ -8,8 +8,9 @@ import (
 	"log/slog"
 	"sync"
 
+	"github.com/tdeslauriers/apprentice/internal/permissions"
 	"github.com/tdeslauriers/apprentice/internal/util"
-	"github.com/tdeslauriers/apprentice/pkg/permissions"
+	"github.com/tdeslauriers/apprentice/pkg/api/allowances"
 	"github.com/tdeslauriers/carapace/pkg/connect"
 	"github.com/tdeslauriers/carapace/pkg/data"
 	exo "github.com/tdeslauriers/carapace/pkg/permissions"
@@ -27,7 +28,11 @@ type AllowancePermissionsService interface {
 	// UpdateAllowancePermissions updates the permissions for a given user/allowance account in the datebase
 	// It returns a map of added permissions, removed permissions, and an error if the update fails.
 	// Slugs are the slugs for the permission records.
-	UpdateAllowancePermissions(ctx context.Context, a *Allowance, slugs []string) (map[string]exo.PermissionRecord, map[string]exo.PermissionRecord, error)
+	UpdateAllowancePermissions(
+		ctx context.Context,
+		a *allowances.Allowance,
+		slugs []string,
+	) (map[string]exo.PermissionRecord, map[string]exo.PermissionRecord, error)
 }
 
 // NewAllowancePermissionsService creates a new AllowancePermissionsService interface
@@ -64,7 +69,11 @@ func (s *allowancePermissionsService) GetAllowancePermissions(username string) (
 // UpdateAllowancePermissions is the concrete implementation of the service method which
 // updates the permissions for a given user/allowance account in the database.
 // It returns a map of added permissions, removed permissions, and an error if the update fails
-func (s *allowancePermissionsService) UpdateAllowancePermissions(ctx context.Context, a *Allowance, slugs []string) (map[string]exo.PermissionRecord, map[string]exo.PermissionRecord, error) {
+func (s *allowancePermissionsService) UpdateAllowancePermissions(
+	ctx context.Context,
+	a *allowances.Allowance,
+	slugs []string,
+) (map[string]exo.PermissionRecord, map[string]exo.PermissionRecord, error) {
 
 	// create local log to hold telmetry from context
 	// get telemetry from context -> set up log

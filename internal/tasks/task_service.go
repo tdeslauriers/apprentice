@@ -11,7 +11,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/tdeslauriers/apprentice/internal/util"
-	"github.com/tdeslauriers/apprentice/pkg/allowances"
+	api "github.com/tdeslauriers/apprentice/pkg/api/allowances"
+	"github.com/tdeslauriers/apprentice/pkg/api/tasks"
 	"github.com/tdeslauriers/carapace/pkg/data"
 	exo "github.com/tdeslauriers/carapace/pkg/permissions"
 )
@@ -24,16 +25,16 @@ type TaskService interface {
 	// Note: this is meant to be a Get All Tasks function and will default to returning all tasks (based on permissions)
 	// username (should come from a valid source like jwt subject) needed if permissions do not
 	// allow getting all tasks: it will filter for just that user's tasks
-	GetTasks(username string, paramas url.Values, permissions map[string]exo.PermissionRecord) ([]TaskData, error)
+	GetTasks(username string, paramas url.Values, permissions map[string]exo.PermissionRecord) ([]tasks.TaskData, error)
 
 	// GetTask retrieves a single task record from the database including its template data and allowance username + slug
-	GetTask(slug string) (*TaskData, error)
+	GetTask(slug string) (*tasks.TaskData, error)
 
 	// CreateTask creates a new task record in the database
 	CreateTask() (*TaskRecord, error)
 
 	// CreateAllowanceXref creates a new allowance-task xref record in the database
-	CreateAllowanceXref(t *TaskRecord, a *allowances.Allowance) (*TaskAllowanceXref, error)
+	CreateAllowanceXref(t *TaskRecord, a *api.Allowance) (*TaskAllowanceXref, error)
 
 	// UpdateTask updates a task record in the database
 	UpdateTask(t TaskRecord) error
@@ -70,10 +71,10 @@ func (s *taskService) GetTasks(
 	username string,
 	params url.Values,
 	permissions map[string]exo.PermissionRecord,
-) ([]TaskData, error) {
+) ([]tasks.TaskData, error) {
 
 	// find tasks in database that match the url params and permissions
-	tasks, err := s.db.FindTasksByParams(username, params, permissions)
+	records, err := s.db.FindTasksByParams(username, params, permissions)
 	if err != nil {
 		return nil, fmt.Errorf("failed to select task records: %v", err)
 	}
@@ -91,14 +92,14 @@ func (s *taskService) GetTasks(
 		usernameCache  = make(map[string]string)
 		allowanceCache = make(map[string]string)
 
-		errChan = make(chan error, len(tasks))
+		errChan = make(chan error, len(records))
 	)
 
-	for i := range tasks {
+	for i := range records {
 
 		// decrypted username
 		wg.Add(1)
-		go func(task *TaskData, ch chan error, wg *sync.WaitGroup) {
+		go func(task *tasks.TaskData, ch chan error, wg *sync.WaitGroup) {
 			defer wg.Done()
 
 			// check if the username is already in the cache
@@ -130,11 +131,11 @@ func (s *taskService) GetTasks(
 			task.Username = string(decrypted)
 			taskUserMutex.Unlock()
 
-		}(&tasks[i], errChan, &wg)
+		}(&records[i], errChan, &wg)
 
 		// decrypted allowance slug
 		wg.Add(1)
-		go func(task *TaskData, ch chan error, wg *sync.WaitGroup) {
+		go func(task *tasks.TaskData, ch chan error, wg *sync.WaitGroup) {
 			defer wg.Done()
 
 			// check if the allowance slug is already in the cache
@@ -166,7 +167,7 @@ func (s *taskService) GetTasks(
 			task.AllowanceSlug = string(decrypted)
 			taskAllowanceMutex.Unlock()
 
-		}(&tasks[i], errChan, &wg)
+		}(&records[i], errChan, &wg)
 	}
 
 	wg.Wait()
@@ -181,12 +182,12 @@ func (s *taskService) GetTasks(
 		return nil, fmt.Errorf("failed to decrypt usernames: %v", strings.Join(errs, "; "))
 	}
 
-	return tasks, nil
+	return records, nil
 }
 
 // GetTask is a concrete implementation of the GetTask method in the TaskService interface
 // it retrieves a single task record from the database including its template data and allowance username + slug
-func (s *taskService) GetTask(slug string) (*TaskData, error) {
+func (s *taskService) GetTask(slug string) (*tasks.TaskData, error) {
 
 	// quick validation of slug
 	if len(slug) < 16 || len(slug) > 64 {
@@ -290,7 +291,7 @@ func (s *taskService) CreateTask() (*TaskRecord, error) {
 }
 
 // CreateAllowanceXref is a concrete implementation of the CreateAllowanceXref method in the TaskService interface
-func (s *taskService) CreateAllowanceXref(t *TaskRecord, a *allowances.Allowance) (*TaskAllowanceXref, error) {
+func (s *taskService) CreateAllowanceXref(t *TaskRecord, a *api.Allowance) (*TaskAllowanceXref, error) {
 
 	// create the new xref record
 	xref := TaskAllowanceXref{

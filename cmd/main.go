@@ -5,8 +5,8 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/tdeslauriers/apprentice/internal/manager"
 	"github.com/tdeslauriers/apprentice/internal/util"
-	"github.com/tdeslauriers/apprentice/pkg/manager"
 	"github.com/tdeslauriers/carapace/pkg/config"
 )
 

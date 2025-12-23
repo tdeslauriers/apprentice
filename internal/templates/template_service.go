@@ -9,12 +9,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tdeslauriers/apprentice/internal/util"
-
-	"github.com/tdeslauriers/apprentice/pkg/allowances"
-	"github.com/tdeslauriers/apprentice/pkg/tasks"
-
 	"github.com/google/uuid"
+	"github.com/tdeslauriers/apprentice/internal/tasks"
+	"github.com/tdeslauriers/apprentice/internal/util"
+	"github.com/tdeslauriers/apprentice/pkg/api/allowances"
+	api "github.com/tdeslauriers/apprentice/pkg/api/templates"
 	"github.com/tdeslauriers/carapace/pkg/connect"
 	"github.com/tdeslauriers/carapace/pkg/data"
 	"github.com/tdeslauriers/carapace/pkg/validate"
@@ -24,25 +23,25 @@ import (
 type TemplateService interface {
 
 	// GetTemplates retrieves all active template from the database including it's assignees.
-	GetTemplates() ([]Template, error)
+	GetTemplates() ([]api.Template, error)
 
 	// GetTemplate retrieves a template record from the database by slug including it's assignees.
-	GetTemplate(slug string) (*Template, error)
+	GetTemplate(slug string) (*api.Template, error)
 
 	// CreateTemplate creates a new template record in the database
-	CreateTemplate(ctx context.Context, cmd TemplateCmd) (*TemplateRecord, error)
+	CreateTemplate(ctx context.Context, cmd api.TemplateCmd) (*api.TemplateRecord, error)
 
 	// UpdateTemplate updates a template record in the database
-	UpdateTemplate(ctx context.Context, t *TemplateRecord) error
+	UpdateTemplate(ctx context.Context, t *api.TemplateRecord) error
 
 	// CreateAllowanceXref creates a new allowance-template xref record in the database
-	CreateAllowanceXref(ctx context.Context, t *TemplateRecord, a *allowances.Allowance) (*AllowanceTemplateXref, error)
+	CreateAllowanceXref(ctx context.Context, t *api.TemplateRecord, a *allowances.Allowance) (*AllowanceTemplateXref, error)
 
 	// DeleteAllowanceXref deletes an allowance-template xref record from the database
-	DeleteAllowanceXref(ctx context.Context, t *TemplateRecord, a *allowances.Allowance) error
+	DeleteAllowanceXref(ctx context.Context, t *api.TemplateRecord, a *allowances.Allowance) error
 
 	// CreateTaskXref creates a new task-template xref record in the database
-	CreateTaskXref(ctx context.Context, t *TemplateRecord, ta *tasks.TaskRecord) (*TemplateTaskXref, error)
+	CreateTaskXref(ctx context.Context, t *api.TemplateRecord, ta *tasks.TaskRecord) (*TemplateTaskXref, error)
 }
 
 // NewService creates a new Service interface, returning a pointer to the concrete implementation
@@ -70,7 +69,7 @@ type templateService struct {
 
 // GetTemplates is a concrete implementation of the GetTemplates method in the TemplateService interface
 // it retrieves all active task templates from the database including their assignees
-func (s *templateService) GetTemplates() ([]Template, error) {
+func (s *templateService) GetTemplates() ([]api.Template, error) {
 
 	// get all active templates (including assignee) from the database
 	templates, err := s.db.FindActiveTemplates()
@@ -131,10 +130,10 @@ func (s *templateService) GetTemplates() ([]Template, error) {
 	}
 
 	// consolidate to unique template records with usernames slices
-	uniqueTemplates := make(map[string]Template, len(templates))
+	uniqueTemplates := make(map[string]api.Template, len(templates))
 	for _, t := range templates {
 		if _, ok := uniqueTemplates[t.Id]; !ok {
-			uniqueTemplates[t.Id] = Template{
+			uniqueTemplates[t.Id] = api.Template{
 				Id:           t.Id,
 				Name:         t.Name,
 				Description:  t.Description,
@@ -144,12 +143,12 @@ func (s *templateService) GetTemplates() ([]Template, error) {
 				Slug:         t.TemplateSlug,
 				CreatedAt:    t.CreatedAt,
 				IsArchived:   t.IsArchived,
-				Assignees:    make([]Assignee, 0),
+				Assignees:    make([]api.Assignee, 0),
 			}
 		}
 
 		template := uniqueTemplates[t.Id]
-		template.Assignees = append(template.Assignees, Assignee{
+		template.Assignees = append(template.Assignees, api.Assignee{
 			Username:      *uniqueEncrypted[t.Username],
 			AllowanceSlug: *uniqueEncrypted[t.AllowanceSlug],
 		})
@@ -157,7 +156,7 @@ func (s *templateService) GetTemplates() ([]Template, error) {
 	}
 
 	// convert map to slice
-	result := make([]Template, 0, len(uniqueTemplates))
+	result := make([]api.Template, 0, len(uniqueTemplates))
 	for _, t := range uniqueTemplates {
 		result = append(result, t)
 	}
@@ -168,7 +167,7 @@ func (s *templateService) GetTemplates() ([]Template, error) {
 }
 
 // GetTemplate is a concrete implementation of the GetTemplate method in the TemplateService interface
-func (s *templateService) GetTemplate(slug string) (*Template, error) {
+func (s *templateService) GetTemplate(slug string) (*api.Template, error) {
 
 	// validate slug
 	// redundant check, but good practice
@@ -225,7 +224,7 @@ func (s *templateService) GetTemplate(slug string) (*Template, error) {
 	}
 
 	// consolidate to unique template record with usernames slice
-	uniqueTemplate := Template{
+	uniqueTemplate := api.Template{
 		Id:           templateAssignees[0].Id,
 		Name:         templateAssignees[0].Name,
 		Description:  templateAssignees[0].Description,
@@ -235,11 +234,11 @@ func (s *templateService) GetTemplate(slug string) (*Template, error) {
 		Slug:         templateAssignees[0].TemplateSlug,
 		CreatedAt:    templateAssignees[0].CreatedAt,
 		IsArchived:   templateAssignees[0].IsArchived,
-		Assignees:    make([]Assignee, 0),
+		Assignees:    make([]api.Assignee, 0),
 	}
 	for _, t := range templateAssignees {
 
-		uniqueTemplate.Assignees = append(uniqueTemplate.Assignees, Assignee{
+		uniqueTemplate.Assignees = append(uniqueTemplate.Assignees, api.Assignee{
 			Username:      t.Username,
 			AllowanceSlug: t.AllowanceSlug,
 		})
@@ -251,7 +250,7 @@ func (s *templateService) GetTemplate(slug string) (*Template, error) {
 }
 
 // CreateTemplate is a concrete implementation of the CreateTemplate method in the TemplateService interface
-func (s *templateService) CreateTemplate(ctx context.Context, cmd TemplateCmd) (*TemplateRecord, error) {
+func (s *templateService) CreateTemplate(ctx context.Context, cmd api.TemplateCmd) (*api.TemplateRecord, error) {
 
 	// add telemetry fields to logger if exists in context
 	log := s.logger
@@ -279,7 +278,7 @@ func (s *templateService) CreateTemplate(ctx context.Context, cmd TemplateCmd) (
 	}
 
 	// create the new template record
-	t := TemplateRecord{
+	t := api.TemplateRecord{
 		Id:          id.String(),
 		Name:        cmd.Name,
 		Description: cmd.Description,
@@ -300,7 +299,7 @@ func (s *templateService) CreateTemplate(ctx context.Context, cmd TemplateCmd) (
 }
 
 // UpdateTemplate is a concrete implementation of the UpdateTemplate method in the TemplateService interface
-func (s *templateService) UpdateTemplate(ctx context.Context, t *TemplateRecord) error {
+func (s *templateService) UpdateTemplate(ctx context.Context, t *api.TemplateRecord) error {
 
 	// add telemetry fields to logger if exists in context
 	log := s.logger
@@ -329,7 +328,7 @@ func (s *templateService) UpdateTemplate(ctx context.Context, t *TemplateRecord)
 // CreateAllowanceXref is a concrete implementation of the CreateAllowanceXref method in the TemplateService interface
 func (s *templateService) CreateAllowanceXref(
 	ctx context.Context,
-	t *TemplateRecord,
+	t *api.TemplateRecord,
 	a *allowances.Allowance,
 ) (*AllowanceTemplateXref, error) {
 
@@ -358,7 +357,7 @@ func (s *templateService) CreateAllowanceXref(
 }
 
 // DeleteAllowanceXref is a concrete implementation of the DeleteAllowanceXref method in the TemplateService interface
-func (s *templateService) DeleteAllowanceXref(ctx context.Context, t *TemplateRecord, a *allowances.Allowance) error {
+func (s *templateService) DeleteAllowanceXref(ctx context.Context, t *api.TemplateRecord, a *allowances.Allowance) error {
 
 	// add telemetry fields to logger if exists in context
 	log := s.logger
@@ -379,7 +378,11 @@ func (s *templateService) DeleteAllowanceXref(ctx context.Context, t *TemplateRe
 }
 
 // CreateTaskXref is a concrete implementation of the CreateTaskXref method in the TemplateService interface
-func (s *templateService) CreateTaskXref(ctx context.Context, t *TemplateRecord, ta *tasks.TaskRecord) (*TemplateTaskXref, error) {
+func (s *templateService) CreateTaskXref(
+	ctx context.Context,
+	t *api.TemplateRecord,
+	ta *tasks.TaskRecord,
+) (*TemplateTaskXref, error) {
 
 	// add telemetry fields to logger if exists in context
 	log := s.logger

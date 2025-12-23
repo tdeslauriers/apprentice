@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/tdeslauriers/apprentice/pkg/api/tasks"
 	"github.com/tdeslauriers/carapace/pkg/validate"
 )
 
@@ -178,7 +179,7 @@ func ValidateQueryParams(params map[string][]string) error {
 
 			// artificially declare cadence param(s) a Cadence type to use Cadence.IsValidCadence()
 			for _, c := range cadenceList {
-				test := Cadence(strings.TrimSpace(strings.ToUpper(c)))
+				test := tasks.Cadence(strings.TrimSpace(strings.ToUpper(c)))
 				if (&test).IsValidCadence() != nil {
 					return fmt.Errorf("invalid cadence parameter: %s", c)
 				}
@@ -204,7 +205,7 @@ func ValidateQueryParams(params map[string][]string) error {
 
 			// artificially declare category param(s) a Category type to use Category.IsValidCategory()
 			for _, c := range categoryList {
-				test := Category(strings.TrimSpace(strings.ToUpper(c)))
+				test := tasks.Category(strings.TrimSpace(strings.ToUpper(c)))
 				if (&test).IsValidCategory() != nil {
 					return fmt.Errorf("invalid category parameter: %s", c)
 				}

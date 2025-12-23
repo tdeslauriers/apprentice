@@ -12,8 +12,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/tdeslauriers/apprentice/internal/permissions"
 	"github.com/tdeslauriers/apprentice/internal/util"
-	"github.com/tdeslauriers/apprentice/pkg/permissions"
+	"github.com/tdeslauriers/apprentice/pkg/api/allowances"
 	"github.com/tdeslauriers/carapace/pkg/data"
 	"github.com/tdeslauriers/carapace/pkg/validate"
 )
@@ -22,28 +23,28 @@ import (
 type AllowanceService interface {
 
 	// GetAllowances returns all allowance accounts
-	GetAllowances() ([]Allowance, error)
+	GetAllowances() ([]allowances.Allowance, error)
 
 	// GetBySlug returns a single allowance account by slug
-	GetBySlug(slug string) (*Allowance, error)
+	GetBySlug(slug string) (*allowances.Allowance, error)
 
 	// GetByUser returns a single allowance account by username
-	GetByUser(username string) (*Allowance, error)
+	GetByUser(username string) (*allowances.Allowance, error)
 
 	// GetByUsers returns multiple allowance accounts by usernames if they are valid.
 	// and returns a slice of the users names that were not found in the database.
 	// Note: it will error on any not well-formed usernames.
-	GetValidUsers(users []string) (existing []Allowance, missing []string, err error)
+	GetValidUsers(users []string) (existing []allowances.Allowance, missing []string, err error)
 
 	// CreateAllowance creates a new allowance account for a user
-	CreateAllowance(username string) (*Allowance, error)
+	CreateAllowance(username string) (*allowances.Allowance, error)
 
 	// ValidateUpdate validates the update command for an allowance account for business rules errors.
 	// Note: this is in-addition-to struct field validation checks.
-	ValidateUpdate(cmd UpdateAllowanceCmd, record Allowance) error
+	ValidateUpdate(cmd allowances.UpdateAllowanceCmd, record allowances.Allowance) error
 
 	// UpdateAllowance updates an allowance account
-	UpdateAllowance(cmd *Allowance) error
+	UpdateAllowance(cmd *allowances.Allowance) error
 }
 
 // NewAllowanceService creates a new Service interface, returning a pointer to the concrete implementation
@@ -73,7 +74,7 @@ type allowanceService struct {
 }
 
 // GetAllowances is the concrete implementation of the Service interface method GetAll
-func (s *allowanceService) GetAllowances() ([]Allowance, error) {
+func (s *allowanceService) GetAllowances() ([]allowances.Allowance, error) {
 
 	// get all allowance accounts
 	records, err := s.sql.FindAll()
@@ -84,13 +85,13 @@ func (s *allowanceService) GetAllowances() ([]Allowance, error) {
 	// decrypt and convert to clear text model; drop unneeded fields
 	var (
 		wg            sync.WaitGroup
-		allowanceChan = make(chan Allowance, len(records))
+		allowanceChan = make(chan allowances.Allowance, len(records))
 		chErr         = make(chan error, len(records))
 	)
 
 	for _, record := range records {
 		wg.Add(1)
-		go func(r AllowanceRecord, ch chan Allowance, chErr chan error, wg *sync.WaitGroup) {
+		go func(r AllowanceRecord, ch chan allowances.Allowance, chErr chan error, wg *sync.WaitGroup) {
 
 			defer wg.Done()
 
@@ -121,7 +122,7 @@ func (s *allowanceService) GetAllowances() ([]Allowance, error) {
 	}
 
 	// collect clear text models
-	var allowances []Allowance
+	var allowances []allowances.Allowance
 	for a := range allowanceChan {
 		allowances = append(allowances, a)
 	}
@@ -130,7 +131,7 @@ func (s *allowanceService) GetAllowances() ([]Allowance, error) {
 }
 
 // GetBySlug is the concrete implementation of the Service interface method GetBySlug
-func (s *allowanceService) GetBySlug(slug string) (*Allowance, error) {
+func (s *allowanceService) GetBySlug(slug string) (*allowances.Allowance, error) {
 
 	// validate slug
 	if !validate.IsValidUuid(slug) {
@@ -167,7 +168,7 @@ func (s *allowanceService) GetBySlug(slug string) (*Allowance, error) {
 }
 
 // GetByUser is the concrete implementation of the Service interface method GetByUser
-func (s *allowanceService) GetByUser(username string) (*Allowance, error) {
+func (s *allowanceService) GetByUser(username string) (*allowances.Allowance, error) {
 
 	// validate username
 	if err := validate.IsValidEmail(username); err != nil {
@@ -208,7 +209,7 @@ func (s *allowanceService) GetByUser(username string) (*Allowance, error) {
 
 // GetValidUsers is the concrete implementation of the Service interface method GetValidUsers
 // It will error if any of the users does not exist in the database.
-func (s *allowanceService) GetValidUsers(users []string) ([]Allowance, []string, error) {
+func (s *allowanceService) GetValidUsers(users []string) ([]allowances.Allowance, []string, error) {
 
 	// handle empty input
 	if len(users) == 0 {
@@ -242,13 +243,13 @@ func (s *allowanceService) GetValidUsers(users []string) ([]Allowance, []string,
 	// decrypt and convert to clear text models
 	var (
 		wg          sync.WaitGroup
-		allowanceCh = make(chan Allowance, len(records))
+		allowanceCh = make(chan allowances.Allowance, len(records))
 		chErr       = make(chan error, len(records))
 	)
 
 	for _, record := range records {
 		wg.Add(1)
-		go func(r AllowanceRecord, ch chan Allowance, chErr chan error, wg *sync.WaitGroup) {
+		go func(r AllowanceRecord, ch chan allowances.Allowance, chErr chan error, wg *sync.WaitGroup) {
 
 			defer wg.Done()
 
@@ -278,13 +279,13 @@ func (s *allowanceService) GetValidUsers(users []string) ([]Allowance, []string,
 	}
 
 	// collect existing users into a map
-	found := make(map[string]Allowance, len(allowanceCh)) // username is the key
+	found := make(map[string]allowances.Allowance, len(allowanceCh)) // username is the key
 	for a := range allowanceCh {
 		found[a.Username] = a
 	}
 
 	// Compare found to orginal user list
-	existing := make([]Allowance, 0, len(users))
+	existing := make([]allowances.Allowance, 0, len(users))
 	missing := make([]string, 0, len(users))
 	for _, u := range users {
 		if _, ok := found[u]; !ok {
@@ -299,7 +300,7 @@ func (s *allowanceService) GetValidUsers(users []string) ([]Allowance, []string,
 
 // CreateAllowance is the concrete implementation of the Service interface method CreateAllowance
 // Note: consolidationg account exists? check since the index would need to be generated twice otherwise.
-func (s *allowanceService) CreateAllowance(username string) (*Allowance, error) {
+func (s *allowanceService) CreateAllowance(username string) (*allowances.Allowance, error) {
 
 	// check if username is valid email
 	if err := validate.IsValidEmail(username); err != nil {
@@ -450,7 +451,7 @@ func (s *allowanceService) CreateAllowance(username string) (*Allowance, error) 
 	}
 
 	// return clear text allowance account model
-	return &Allowance{
+	return &allowances.Allowance{
 		Id:       allowanceId,
 		Balance:  0.0,
 		Username: username,
@@ -468,7 +469,7 @@ func (s *allowanceService) CreateAllowance(username string) (*Allowance, error) 
 // Note: this function updates the allowance fields, not the assigned (user or slug).  The user is immutable.
 // If a new user should be assigned to the account, a new account should be created.
 // This may need to be re-evaluated later.
-func (s *allowanceService) UpdateAllowance(cmd *Allowance) error {
+func (s *allowanceService) UpdateAllowance(cmd *allowances.Allowance) error {
 
 	// validate slug: redundant check, but good practice in case this is called by a different function
 	if !validate.IsValidUuid(cmd.Slug) {
@@ -509,7 +510,7 @@ func (s *allowanceService) UpdateAllowance(cmd *Allowance) error {
 }
 
 // prepareAllowance decrypts and converts an allowance record to a clear text model
-func (s *allowanceService) prepareAllowance(r AllowanceRecord) (*Allowance, error) {
+func (s *allowanceService) prepareAllowance(r AllowanceRecord) (*allowances.Allowance, error) {
 
 	var (
 		wg    sync.WaitGroup
@@ -580,10 +581,9 @@ func (s *allowanceService) prepareAllowance(r AllowanceRecord) (*Allowance, erro
 
 	// return clear text model
 	// omitting fields: userIndex, slugIndex
-	return &Allowance{
+	return &allowances.Allowance{
 		Id:           r.Id,
 		Balance:      balance,
-		Username:     username,
 		Slug:         slug,
 		CreatedAt:    r.CreatedAt,
 		UpdatedAt:    r.UpdatedAt,
@@ -596,7 +596,7 @@ func (s *allowanceService) prepareAllowance(r AllowanceRecord) (*Allowance, erro
 // ValidateUpdate is the concrete implementation of the Service interface method ValidateUpdate
 // Note: this is not written in a consise way, but rather to show the logic more explicitly
 // and includes redundant checks for in case the input validation check is not performed.
-func (s *allowanceService) ValidateUpdate(cmd UpdateAllowanceCmd, record Allowance) error {
+func (s *allowanceService) ValidateUpdate(cmd allowances.UpdateAllowanceCmd, record allowances.Allowance) error {
 
 	// check for valid debit and credit amounts
 	if cmd.Debit > 1000000 {

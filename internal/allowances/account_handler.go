@@ -7,10 +7,9 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/tdeslauriers/apprentice/internal/permissions"
 	"github.com/tdeslauriers/apprentice/internal/util"
-
-	"github.com/tdeslauriers/apprentice/pkg/permissions"
-
+	"github.com/tdeslauriers/apprentice/pkg/api/allowances"
 	"github.com/tdeslauriers/carapace/pkg/connect"
 	"github.com/tdeslauriers/carapace/pkg/data"
 	"github.com/tdeslauriers/carapace/pkg/jwt"
@@ -188,7 +187,7 @@ func (h *accountHandler) updateAccount(w http.ResponseWriter, r *http.Request) {
 	log = log.With("actor", authedUser.Claims.Subject)
 
 	// decode request body
-	var cmd UpdateAllowanceCmd
+	var cmd allowances.UpdateAllowanceCmd
 	if err := json.NewDecoder(r.Body).Decode(&cmd); err != nil {
 		log.Error("failed to decode request body", "err", err.Error())
 		e := connect.ErrorHttp{
@@ -268,8 +267,7 @@ func (h *accountHandler) updateAccount(w http.ResponseWriter, r *http.Request) {
 
 	// prepare updated allowance
 	// used as return object if update successful
-	updated := Allowance{
-
+	updated := allowances.Allowance{
 		Id:           allowance.Id,
 		Balance:      allowance.Balance + cmd.Credit - cmd.Debit,
 		Username:     allowance.Username,

@@ -3,6 +3,7 @@ package tasks
 import (
 	"database/sql"
 
+	"github.com/tdeslauriers/apprentice/pkg/api/tasks"
 	"github.com/tdeslauriers/carapace/pkg/data"
 )
 
@@ -11,10 +12,10 @@ type ScheduledRepository interface {
 
 	// TaskExistsByCadence checks if tasks exist by cadence, ie, has it already been created
 	// by another service instance.
-	TaskExistsByCadence(cadence Cadence) (bool, error)
+	TaskExistsByCadence(cadence tasks.Cadence) (bool, error)
 
 	// FindTemplates retrieves templates by cadence for scheduled task generation.
-	FindTemplates(cadence Cadence) ([]TaskGeneration, error)
+	FindTemplates(cadence tasks.Cadence) ([]TaskGeneration, error)
 
 	// InsertTaskRecord adds a new task record to the database.
 	InsertTaskRecord(record TaskRecord) error
@@ -43,7 +44,7 @@ type scheduledAdapter struct {
 
 // TaskExistsByCadence checks if tasks exist by cadence, ie, has it already been created
 // by another service instance.
-func (s *scheduledAdapter) TaskExistsByCadence(cadence Cadence) (bool, error) {
+func (s *scheduledAdapter) TaskExistsByCadence(cadence tasks.Cadence) (bool, error) {
 
 	qry := `
 		SELECT EXISTS (
@@ -59,7 +60,7 @@ func (s *scheduledAdapter) TaskExistsByCadence(cadence Cadence) (bool, error) {
 }
 
 // FindTemplates retrieves templates by cadence for scheduled task generation.
-func (s *scheduledAdapter) FindTemplates(cadence Cadence) ([]TaskGeneration, error) {
+func (s *scheduledAdapter) FindTemplates(cadence tasks.Cadence) ([]TaskGeneration, error) {
 
 	qry := `
 		SELECT 

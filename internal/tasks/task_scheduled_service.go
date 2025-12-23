@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/tdeslauriers/apprentice/internal/util"
+	"github.com/tdeslauriers/apprentice/pkg/api/tasks"
 	"github.com/tdeslauriers/carapace/pkg/data"
 )
 
@@ -88,7 +89,7 @@ func (s *scheduledService) CreateDailyTasks() {
 			<-timer.C
 
 			// generate daily tasks: includes check if tasks already created by another instance of the service
-			if err := s.generateScheduledTasks(Daily); err != nil {
+			if err := s.generateScheduledTasks(tasks.Daily); err != nil {
 				s.logger.Error(fmt.Sprintf("failed to generate daily tasks: %v", err))
 				continue
 			}
@@ -140,7 +141,7 @@ func (s *scheduledService) CreateWeeklyTasks() {
 			<-timer.C
 
 			// generate weekly tasks: includes check if tasks already created by another instance of the service
-			if err := s.generateScheduledTasks(Weekly); err != nil {
+			if err := s.generateScheduledTasks(tasks.Weekly); err != nil {
 				s.logger.Error(fmt.Sprintf("failed to generate weekly tasks: %v", err))
 				continue
 			}
@@ -152,7 +153,7 @@ func (s *scheduledService) CreateWeeklyTasks() {
 
 // generateScheduledTasks is a helper method to generate scheduled tasks.
 // It takes a cadence and inserts it into sql statements and preforms the task generation.
-func (s *scheduledService) generateScheduledTasks(cadence Cadence) error {
+func (s *scheduledService) generateScheduledTasks(cadence tasks.Cadence) error {
 
 	// check if tasks already created by another instance of the service
 	exists, err := s.db.TaskExistsByCadence(cadence)

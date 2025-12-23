@@ -9,8 +9,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tdeslauriers/apprentice/internal/permissions"
 	"github.com/tdeslauriers/apprentice/internal/util"
-	"github.com/tdeslauriers/apprentice/pkg/permissions"
+	"github.com/tdeslauriers/apprentice/pkg/api/allowances"
 	"github.com/tdeslauriers/carapace/pkg/connect"
 	"github.com/tdeslauriers/carapace/pkg/data"
 	"github.com/tdeslauriers/carapace/pkg/jwt"
@@ -300,7 +301,7 @@ func (h *allowancesHandler) createAllowance(w http.ResponseWriter, r *http.Reque
 	}
 
 	// decode request body
-	var cmd CreateAllowanceCmd
+	var cmd allowances.CreateAllowanceCmd
 	if err := json.NewDecoder(r.Body).Decode(&cmd); err != nil {
 		log.Error("failed to decode request body", "err", err.Error())
 		e := connect.ErrorHttp{
@@ -491,7 +492,7 @@ func (h *allowancesHandler) updateAllowance(w http.ResponseWriter, r *http.Reque
 	}
 
 	// decode request body
-	var cmd UpdateAllowanceCmd
+	var cmd allowances.UpdateAllowanceCmd
 	if err := json.NewDecoder(r.Body).Decode(&cmd); err != nil {
 		log.Error("failed to decode request body", "err", err.Error())
 		e := connect.ErrorHttp{
@@ -553,7 +554,7 @@ func (h *allowancesHandler) updateAllowance(w http.ResponseWriter, r *http.Reque
 
 	// prepare updated allowance
 	// used as return object if update successful
-	updated := Allowance{
+	updated := allowances.Allowance{
 		// slug index not provided by GetAllowance(slug)
 		Id:           allowance.Id,
 		Balance:      allowance.Balance + cmd.Credit - cmd.Debit,

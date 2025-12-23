@@ -14,8 +14,10 @@ import (
 	"github.com/tdeslauriers/apprentice/internal/util"
 	"github.com/tdeslauriers/shaw/pkg/api/user"
 
-	"github.com/tdeslauriers/apprentice/pkg/allowances"
-	"github.com/tdeslauriers/apprentice/pkg/tasks"
+	"github.com/tdeslauriers/apprentice/internal/allowances"
+	"github.com/tdeslauriers/apprentice/internal/tasks"
+	api "github.com/tdeslauriers/apprentice/pkg/api/allowances"
+	"github.com/tdeslauriers/apprentice/pkg/api/templates"
 	"github.com/tdeslauriers/carapace/pkg/connect"
 	"github.com/tdeslauriers/carapace/pkg/jwt"
 	"github.com/tdeslauriers/carapace/pkg/session/provider"
@@ -180,11 +182,11 @@ func (h *handler) getAssignees(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// build assignees list by matching users to allowance records
-	assignees := make([]Assignee, 0, len(users))
+	assignees := make([]templates.Assignee, 0, len(users))
 	for _, user := range users {
 		for _, allowance := range allowances {
 			if user.Username == allowance.Username {
-				assignees = append(assignees, Assignee{
+				assignees = append(assignees, templates.Assignee{
 					Username:      user.Username,
 					Firstname:     user.Firstname,
 					Lastname:      user.Lastname,
@@ -239,8 +241,8 @@ func (h *handler) getTemplates(w http.ResponseWriter, r *http.Request) {
 	}
 	log = log.With("actor", authedUser.Claims.Subject)
 
-	// get all templates from the database
-	templates, err := h.template.GetTemplates()
+	// get all temps from the database
+	temps, err := h.template.GetTemplates()
 	if err != nil {
 		log.Error("failed to get templates from database", "err", err.Error())
 		h.template.HandleServiceError(w, err)
@@ -292,17 +294,17 @@ func (h *handler) getTemplates(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// hydrate the assignees records in the templates
-	for i := range templates {
-		for j := range templates[i].Assignees {
-			if user, ok := assigneeMap[templates[i].Assignees[j].Username]; ok {
-				templates[i].Assignees[j] = Assignee{
-					Username:      templates[i].Assignees[j].Username,
+	for i := range temps {
+		for j := range temps[i].Assignees {
+			if user, ok := assigneeMap[temps[i].Assignees[j].Username]; ok {
+				temps[i].Assignees[j] = templates.Assignee{
+					Username:      temps[i].Assignees[j].Username,
 					Firstname:     user.Firstname,
 					Lastname:      user.Lastname,
-					AllowanceSlug: templates[i].Assignees[j].AllowanceSlug,
+					AllowanceSlug: temps[i].Assignees[j].AllowanceSlug,
 				}
 			} else {
-				log.Error(fmt.Sprintf("failed to hydrate assignee: %s", templates[i].Assignees[j].Username))
+				log.Error(fmt.Sprintf("failed to hydrate assignee: %s", temps[i].Assignees[j].Username))
 				e := connect.ErrorHttp{
 					StatusCode: http.StatusInternalServerError,
 					Message:    "failed to hydrate assignees",
@@ -315,7 +317,7 @@ func (h *handler) getTemplates(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	if err := json.NewEncoder(w).Encode(templates); err != nil {
+	if err := json.NewEncoder(w).Encode(temps); err != nil {
 		log.Error("failed to encode templates to json", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusInternalServerError,
@@ -357,7 +359,7 @@ func (h *handler) createTemplate(w http.ResponseWriter, r *http.Request) {
 	log = log.With("actor", authedUser.Claims.Subject)
 
 	// decode request body
-	var cmd TemplateCmd
+	var cmd templates.TemplateCmd
 	if err := json.NewDecoder(r.Body).Decode(&cmd); err != nil {
 		log.Error("failed to decode request body", "err", err.Error())
 		e := connect.ErrorHttp{
@@ -416,7 +418,7 @@ func (h *handler) createTemplate(w http.ResponseWriter, r *http.Request) {
 
 	for _, user := range existing {
 		wgXref.Add(1)
-		go func(u *allowances.Allowance, t *TemplateRecord, errXref chan error, wgXref *sync.WaitGroup) {
+		go func(u *api.Allowance, t *templates.TemplateRecord, errXref chan error, wgXref *sync.WaitGroup) {
 
 			defer wgXref.Done()
 
@@ -461,7 +463,7 @@ func (h *handler) createTemplate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// prepare response object
-	response := Template{
+	response := templates.Template{
 		Id:           template.Id,
 		Name:         template.Name,
 		Description:  template.Description,
@@ -655,7 +657,7 @@ func (h *handler) updateTemplate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// decode request body
-	var cmd TemplateCmd
+	var cmd templates.TemplateCmd
 	if err := json.NewDecoder(r.Body).Decode(&cmd); err != nil {
 		log.Error("failed to decode request body", "err", err.Error())
 		e := connect.ErrorHttp{
@@ -720,7 +722,7 @@ func (h *handler) updateTemplate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// prepare the template for update\
-	updated := TemplateRecord{
+	updated := templates.TemplateRecord{
 		Id:           record.Id, // not allowed to update
 		Name:         cmd.Name,
 		Description:  cmd.Description,
@@ -776,7 +778,7 @@ func (h *handler) updateTemplate(w http.ResponseWriter, r *http.Request) {
 
 	// update the template record
 	wgDb.Add(1)
-	go func(t *TemplateRecord, errDb chan error, wgDb *sync.WaitGroup) {
+	go func(t *templates.TemplateRecord, errDb chan error, wgDb *sync.WaitGroup) {
 		defer wgDb.Done()
 		if err := h.template.UpdateTemplate(ctx, t); err != nil {
 			errDb <- err
@@ -815,7 +817,7 @@ func (h *handler) updateTemplate(w http.ResponseWriter, r *http.Request) {
 			go func(allowanceId string, errDb chan error, wgDb *sync.WaitGroup) {
 				defer wgDb.Done()
 
-				if _, err := h.template.CreateAllowanceXref(ctx, &updated, &allowances.Allowance{Id: allowanceId}); err != nil {
+				if _, err := h.template.CreateAllowanceXref(ctx, &updated, &api.Allowance{Id: allowanceId}); err != nil {
 					errDb <- err
 					return
 				}
