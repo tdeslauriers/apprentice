@@ -2,6 +2,7 @@ package manager
 
 import (
 	"crypto/tls"
+	"database/sql"
 	"encoding/base64"
 	"fmt"
 	"log/slog"
@@ -86,8 +87,6 @@ func New(config *config.Config) (Manager, error) {
 		return nil, fmt.Errorf("failed to connect to database: %v", err)
 	}
 
-	repository := data.NewSqlRepository(db)
-
 	// indexer
 	hmacSecret, err := base64.StdEncoding.DecodeString(config.Database.IndexSecret)
 	if err != nil {
@@ -133,12 +132,12 @@ func New(config *config.Config) (Manager, error) {
 		ClientSecret: config.ServiceAuth.ClientSecret,
 	}
 
-	s2sTokenProvider := provider.NewS2sTokenProvider(s2s, s2sCreds, repository, cryptor)
+	s2sTokenProvider := provider.NewS2sTokenProvider(s2s, s2sCreds, db, cryptor)
 
 	return &manager{
 		config:           *config,
 		serverTls:        serverTlsConfig,
-		repository:       repository,
+		repository:       db,
 		s2sTokenProvider: s2sTokenProvider,
 		s2sVerifier:      jwt.NewVerifier(config.ServiceName, s2sPublicKey),
 		iamVerifier:      jwt.NewVerifier(config.ServiceName, iamPublicKey),
@@ -163,7 +162,7 @@ var _ Manager = (*manager)(nil)
 type manager struct {
 	config           config.Config
 	serverTls        *tls.Config
-	repository       data.SqlRepository
+	repository       *sql.DB
 	s2sTokenProvider provider.S2sTokenProvider
 	s2sVerifier      jwt.Verifier
 	iamVerifier      jwt.Verifier

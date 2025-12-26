@@ -4,7 +4,7 @@ go 1.24.0
 
 toolchain go1.24.4
 
-require github.com/tdeslauriers/carapace v0.2.6
+require github.com/tdeslauriers/carapace v0.3.0
 
 require (
 	github.com/tdeslauriers/ran v0.1.2 // indirect
