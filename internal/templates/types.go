@@ -47,7 +47,7 @@ type TemplateAssignee struct {
 // AllowanceTemplateXref is a model that represents a many-to-many relationship
 // between allowances and templates in the db
 type AllowanceTemplateXref struct {
-	// Id          int             `db:"id" json:"id,omitempty"`
+	Id          int             `db:"id" json:"id,omitempty"`
 	TemplateId  string          `db:"template_uuid" json:"template_uuid,omitempty"`
 	AllowanceId string          `db:"allowance_uuid" json:"allowance_uuid,omitempty"`
 	CreatedAt   data.CustomTime `db:"created_at" json:"created_at,omitempty"`

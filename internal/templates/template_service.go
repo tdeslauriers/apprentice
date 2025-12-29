@@ -81,8 +81,14 @@ func (s *templateService) GetTemplates() ([]api.Template, error) {
 	// map of usernames so dont decrypt the same username multiple times
 	uniqueEncrypted := make(map[string]*string, len(templates)*2)
 
+	// dumping into a map so can decrypt concurrently
 	for _, t := range templates {
-		// dumping into a map so can decrypt concurrently
+
+		// handle possible empty assignees due to no xref records
+		if t.Username == "" || t.AllowanceSlug == "" {
+			continue
+		}
+
 		if _, ok := uniqueEncrypted[t.Username]; !ok {
 			uniqueEncrypted[t.Username] = new(string)
 		}
@@ -103,15 +109,6 @@ func (s *templateService) GetTemplates() ([]api.Template, error) {
 		wg.Add(1)
 		go func(encrypted string, ch chan error, wg *sync.WaitGroup) {
 			defer wg.Done()
-
-			// errors in template creation can lead to empty assignees/slugs (xref not created)
-			// need to check for empty strings and simply return them as empty
-			if encrypted == "" {
-				mu.Lock()
-				*uniqueEncrypted[encrypted] = ""
-				mu.Unlock()
-				return
-			}
 
 			decrypted, err := s.cryptor.DecryptServiceData(encrypted)
 			if err != nil {
@@ -156,7 +153,13 @@ func (s *templateService) GetTemplates() ([]api.Template, error) {
 			}
 		}
 
+		// handle possible empty assignees due to no xref records -> error in template creation or update
+		if t.Username == "" || t.AllowanceSlug == "" {
+			continue
+		}
+
 		template := uniqueTemplates[t.Id]
+
 		template.Assignees = append(template.Assignees, api.Assignee{
 			Username:      *uniqueEncrypted[t.Username],
 			AllowanceSlug: *uniqueEncrypted[t.AllowanceSlug],
@@ -201,6 +204,11 @@ func (s *templateService) GetTemplate(slug string) (*api.Template, error) {
 		go func(index int, ch chan error, wg *sync.WaitGroup) {
 			defer wg.Done()
 
+			// handle possible empty assignees due to no xref records
+			if templateAssignees[index].Username == "" {
+				return
+			}
+
 			// decrypt username
 			username, err := s.cryptor.DecryptServiceData(templateAssignees[index].Username)
 			if err != nil {
@@ -208,6 +216,11 @@ func (s *templateService) GetTemplate(slug string) (*api.Template, error) {
 				return
 			}
 			templateAssignees[index].Username = string(username)
+
+			// handle possible empty allowance slugs due to no xref records
+			if templateAssignees[index].AllowanceSlug == "" {
+				return
+			}
 
 			// decrypt allowance slug
 			slug, err := s.cryptor.DecryptServiceData(templateAssignees[index].AllowanceSlug)
@@ -246,6 +259,11 @@ func (s *templateService) GetTemplate(slug string) (*api.Template, error) {
 		Assignees:    make([]api.Assignee, 0),
 	}
 	for _, t := range templateAssignees {
+
+		// handle possible empty assignees due to no xref records -> error in template creation or update
+		if t.Username == "" || t.AllowanceSlug == "" {
+			continue
+		}
 
 		uniqueTemplate.Assignees = append(uniqueTemplate.Assignees, api.Assignee{
 			Username:      t.Username,
@@ -351,6 +369,7 @@ func (s *templateService) CreateAllowanceXref(
 
 	// create the new xref record
 	xref := AllowanceTemplateXref{
+		Id:          0, // auto-incremented by db
 		TemplateId:  t.Id,
 		AllowanceId: a.Id,
 		CreatedAt:   data.CustomTime{Time: time.Now().UTC()},
