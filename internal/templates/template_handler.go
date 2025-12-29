@@ -304,13 +304,9 @@ func (h *handler) getTemplates(w http.ResponseWriter, r *http.Request) {
 					AllowanceSlug: temps[i].Assignees[j].AllowanceSlug,
 				}
 			} else {
-				log.Error(fmt.Sprintf("failed to hydrate assignee: %s", temps[i].Assignees[j].Username))
-				e := connect.ErrorHttp{
-					StatusCode: http.StatusInternalServerError,
-					Message:    "failed to hydrate assignees",
-				}
-				e.SendJsonErr(w)
-				return
+				// should not fail request because we do not have transaction commits for multiple table inserts
+				// on template creation: possible an error will cause the xref table not to be populated correctly
+				log.Warn(fmt.Sprintf("failed to hydrate assignee: %s", temps[i].Assignees[j].Username))
 			}
 		}
 	}
