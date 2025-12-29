@@ -104,6 +104,15 @@ func (s *templateService) GetTemplates() ([]api.Template, error) {
 		go func(encrypted string, ch chan error, wg *sync.WaitGroup) {
 			defer wg.Done()
 
+			// errors in template creation can lead to empty assignees/slugs (xref not created)
+			// need to check for empty strings and simply return them as empty
+			if encrypted == "" {
+				mu.Lock()
+				*uniqueEncrypted[encrypted] = ""
+				mu.Unlock()
+				return
+			}
+
 			decrypted, err := s.cryptor.DecryptServiceData(encrypted)
 			if err != nil {
 				ch <- fmt.Errorf("%v", err)
