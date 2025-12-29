@@ -93,8 +93,8 @@ func (s *taskAdapter) FindTaskBySlug(slug string) (*tasks.TaskData, error) {
 			tsk.is_proactive,
 			tsk.slug AS task_slug,
 			tsk.is_archived,
-			a.username,
-			a.slug AS allowance_slug
+			COALESCE(a.username, '') AS username,
+			COALESCE(a.slug, '') AS allowance_slug
 		FROM task tsk
 			LEFT OUTER JOIN template_task tt ON tsk.uuid = tt.task_uuid
 			LEFT OUTER JOIN template tmp ON tt.template_uuid = tmp.uuid

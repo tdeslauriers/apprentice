@@ -64,8 +64,8 @@ func (a *templateAdapter) FindActiveTemplates() ([]TemplateAssignee, error) {
 			t.slug AS template_slug, 
 			t.created_at, 
 			t.is_archived,
-			a.username,
-			a.slug AS allowance_slug
+			COALESCE(a.username, '') AS username,
+			COALESCE(a.slug, '') AS allowance_slug
 		FROM template t 
 			LEFT OUTER JOIN template_allowance ta ON t.uuid = ta.template_uuid
 			LEFT OUTER JOIN allowance a ON ta.allowance_uuid = a.uuid
