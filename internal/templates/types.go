@@ -56,7 +56,7 @@ type AllowanceTemplateXref struct {
 // TemplateTaskXref is a model that represents a many-to-many relationship
 // between templates and tasks in the db
 type TemplateTaskXref struct {
-	// Id          int             `db:"id" json:"id,omitempty"`
+	Id         int             `db:"id" json:"id,omitempty"`
 	TemplateId string          `db:"template_uuid" json:"template_uuid,omitempty"`
 	TaskId     string          `db:"task_uuid" json:"task_uuid,omitempty"`
 	CreatedAt  data.CustomTime `db:"created_at" json:"created_at,omitempty"`
