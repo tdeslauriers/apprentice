@@ -107,8 +107,10 @@ func ValidateQueryParams(params map[string][]string) error {
 				// check if valid assignee code
 				_, ok := AssigneeCodes[a]
 				// check if valid uuid for search as a slug
-				if !ok && !validate.IsValidUuid(a) {
-					return fmt.Errorf("invalid assignee parameter: %s", a)
+				if !ok {
+					if err := validate.ValidateUuid(a); err != nil {
+						return fmt.Errorf("invalid assignee parameter: %s", a)
+					}
 				}
 			}
 
@@ -152,7 +154,7 @@ func ValidateQueryParams(params map[string][]string) error {
 						return fmt.Errorf("name parameter must be between 2 and 64 characters in length")
 					}
 
-					if err := validate.IsValidName(n); err != nil {
+					if err := validate.ValidateName(n); err != nil {
 						return fmt.Errorf("invalid name parameter: %v", err)
 					}
 				}
@@ -176,10 +178,10 @@ func ValidateQueryParams(params map[string][]string) error {
 				}
 			}
 
-			// artificially declare cadence param(s) a Cadence type to use Cadence.IsValidCadence()
+			// artificially declare cadence param(s) a Cadence type to use Cadence.ValidateCadence()
 			for _, c := range cadenceList {
 				test := Cadence(strings.TrimSpace(strings.ToUpper(c)))
-				if (&test).IsValidCadence() != nil {
+				if (&test).ValidateCadence() != nil {
 					return fmt.Errorf("invalid cadence parameter: %s", c)
 				}
 			}
@@ -202,10 +204,10 @@ func ValidateQueryParams(params map[string][]string) error {
 				}
 			}
 
-			// artificially declare category param(s) a Category type to use Category.IsValidCategory()
+			// artificially declare category param(s) a Category type to use Category.ValidateCategory()
 			for _, c := range categoryList {
 				test := Category(strings.TrimSpace(strings.ToUpper(c)))
-				if (&test).IsValidCategory() != nil {
+				if (&test).ValidateCategory() != nil {
 					return fmt.Errorf("invalid category parameter: %s", c)
 				}
 			}

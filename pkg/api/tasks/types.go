@@ -39,9 +39,9 @@ func (c *Cadence) UnmarshalJSON(data []byte) error {
 	}
 }
 
-// IsValidCadence checks if a cadence is valid
+// ValidateCadence checks if a cadence is valid
 // redundant if the custom unmarshaler is used on a json payload, but that isnt guaranteed.
-func (c *Cadence) IsValidCadence() error {
+func (c *Cadence) ValidateCadence() error {
 	switch *c {
 	case Adhoc, Daily, Weekly, Monthly, Quarterly, Anually:
 		return nil
@@ -85,9 +85,9 @@ func (c *Category) UnmarshalJSON(data []byte) error {
 	}
 }
 
-// IsValidCategory checks if a category is valid
+// ValidateCategory checks if a category is valid
 // redundant if the custom unmarshaler is used on a json payload, but that isnt guaranteed.
-func (c *Category) IsValidCategory() error {
+func (c *Category) ValidateCategory() error {
 	switch *c {
 	case Bills, Car, Dev, Health, House, Kids, Pets, Sports, Study, Work, Yard, Other:
 		return nil
@@ -147,14 +147,14 @@ type TaskStatusCmd struct {
 func (t *TaskStatusCmd) ValidateCmd() error {
 	// csrf
 	if t.Csrf != "" {
-		if !validate.IsValidUuid(t.Csrf) {
+		if err := validate.ValidateUuid(t.Csrf); err != nil {
 			return fmt.Errorf("invalid csrf token submitted with request")
 		}
 	}
 
 	// task slug
 	if t.TaskSlug != "" {
-		if !validate.IsValidUuid(t.TaskSlug) {
+		if err := validate.ValidateUuid(t.TaskSlug); err != nil {
 			return fmt.Errorf("invalid task slug")
 		}
 	}

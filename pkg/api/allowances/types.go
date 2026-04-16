@@ -27,8 +27,10 @@ type Allowance struct {
 }
 
 func (a *Allowance) ValidateCmd() error {
-	if a.Id != "" && !validate.IsValidUuid(a.Id) {
-		return fmt.Errorf("invalid or not well formatted allowance id")
+	if a.Id != "" {
+		if err := validate.ValidateUuid(a.Id); err != nil {
+			return fmt.Errorf("invalid or not well formatted allowance id")
+		}
 	}
 
 	if a.Username != "" {
@@ -36,13 +38,15 @@ func (a *Allowance) ValidateCmd() error {
 			return fmt.Errorf("invalid username: must be greater than %d and less than %d characters long", validate.EmailMin, validate.EmailMax)
 		}
 
-		if err := validate.IsValidEmail(a.Username); err != nil {
+		if err := validate.ValidateEmail(a.Username); err != nil {
 			return fmt.Errorf("invalid username: %v", err)
 		}
 	}
 
-	if a.Slug != "" && !validate.IsValidUuid(a.Slug) {
-		return fmt.Errorf("invalid or not well formatted slug")
+	if a.Slug != "" {
+		if err := validate.ValidateUuid(a.Slug); err != nil {
+			return fmt.Errorf("invalid or not well formatted slug")
+		}
 	}
 
 	return nil
@@ -58,15 +62,15 @@ type CreateAllowanceCmd struct {
 // ValidateCmd performs input validation check on allowance account creation fields.
 func (c *CreateAllowanceCmd) ValidateCmd() error {
 
-	if err := validate.IsValidEmail(c.Username); err != nil {
+	if err := validate.ValidateEmail(c.Username); err != nil {
 		return fmt.Errorf("invalid username: %v", err)
 	}
 
-	if !validate.IsValidUuid(c.Slug) {
+	if err := validate.ValidateUuid(c.Slug); err != nil {
 		return fmt.Errorf("invalid slug")
 	}
 
-	if err := validate.IsValidBirthday(c.BirthDate); err != nil {
+	if err := validate.ValidateBirthday(c.BirthDate); err != nil {
 		return fmt.Errorf("invalid birth date: %v", err)
 	}
 
@@ -89,7 +93,7 @@ type UpdateAllowanceCmd struct {
 // Note: it does not include any business logic validation, only data validation.
 func (u *UpdateAllowanceCmd) ValidateCmd() error {
 	if u.Csrf != "" {
-		if !validate.IsValidUuid(u.Csrf) {
+		if err := validate.ValidateUuid(u.Csrf); err != nil {
 			return fmt.Errorf("invalid csrf token submitted with request")
 		}
 	}

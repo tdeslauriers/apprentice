@@ -30,7 +30,7 @@ func (t *TemplateCmd) ValidateCmd() error {
 
 	// csrf
 	if t.Csrf != "" {
-		if !validate.IsValidUuid(t.Csrf) {
+		if err := validate.ValidateUuid(t.Csrf); err != nil {
 			return fmt.Errorf("invalid csrf token submitted with request")
 		}
 	}
@@ -50,7 +50,7 @@ func (t *TemplateCmd) ValidateCmd() error {
 		return fmt.Errorf("cadence is a required field")
 	}
 
-	if err := t.Cadence.IsValidCadence(); err != nil {
+	if err := t.Cadence.ValidateCadence(); err != nil {
 		return err
 	}
 
@@ -59,7 +59,7 @@ func (t *TemplateCmd) ValidateCmd() error {
 		return fmt.Errorf("category is a required field")
 	}
 
-	if err := t.Category.IsValidCategory(); err != nil {
+	if err := t.Category.ValidateCategory(); err != nil {
 		return err
 	}
 
@@ -69,7 +69,7 @@ func (t *TemplateCmd) ValidateCmd() error {
 	}
 
 	for _, a := range t.Assignees {
-		if err := validate.IsValidEmail(a); err != nil {
+		if err := validate.ValidateEmail(a); err != nil {
 			return fmt.Errorf("invalid assignee: %v", err)
 		}
 	}
@@ -118,7 +118,7 @@ type TemplateRecord struct {
 func (t *TemplateRecord) Validate() error {
 
 	// uuid
-	if !validate.IsValidUuid(t.Id) {
+	if err := validate.ValidateUuid(t.Id); err != nil {
 		return fmt.Errorf("invalid template id")
 	}
 
@@ -133,17 +133,17 @@ func (t *TemplateRecord) Validate() error {
 	}
 
 	// cadence
-	if err := t.Cadence.IsValidCadence(); err != nil {
+	if err := t.Cadence.ValidateCadence(); err != nil {
 		return err
 	}
 
 	// category
-	if err := t.Category.IsValidCategory(); err != nil {
+	if err := t.Category.ValidateCategory(); err != nil {
 		return err
 	}
 
 	// slug
-	if !validate.IsValidUuid(t.Slug) {
+	if err := validate.ValidateUuid(t.Slug); err != nil {
 		return fmt.Errorf("invalid template slug")
 	}
 

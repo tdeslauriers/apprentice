@@ -117,7 +117,7 @@ func (h *allowancePermissionsHandler) getAllowancePermissions(w http.ResponseWri
 	}
 
 	// validate the username is a well-formed email address
-	if err := validate.IsValidEmail(username); err != nil {
+	if err := validate.ValidateEmail(username); err != nil {
 		log.Error("failed to validate username parmameter", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusBadRequest,

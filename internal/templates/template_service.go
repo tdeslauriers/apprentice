@@ -183,7 +183,7 @@ func (s *templateService) GetTemplate(slug string) (*api.Template, error) {
 
 	// validate slug
 	// redundant check, but good practice
-	if !validate.IsValidUuid(slug) {
+	if err := validate.ValidateUuid(slug); err != nil {
 		return nil, fmt.Errorf("invalid template slug: %s", slug)
 	}
 

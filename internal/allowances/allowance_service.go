@@ -134,7 +134,7 @@ func (s *allowanceService) GetAllowances() ([]allowances.Allowance, error) {
 func (s *allowanceService) GetBySlug(slug string) (*allowances.Allowance, error) {
 
 	// validate slug
-	if !validate.IsValidUuid(slug) {
+	if err := validate.ValidateUuid(slug); err != nil {
 		return nil, fmt.Errorf("%s: %s", ErrInvalidAllowanceSlug, slug)
 	}
 
@@ -171,7 +171,7 @@ func (s *allowanceService) GetBySlug(slug string) (*allowances.Allowance, error)
 func (s *allowanceService) GetByUser(username string) (*allowances.Allowance, error) {
 
 	// validate username
-	if err := validate.IsValidEmail(username); err != nil {
+	if err := validate.ValidateEmail(username); err != nil {
 		return nil, fmt.Errorf("%s: %v", ErrInvalidUsername, err)
 	}
 
@@ -218,7 +218,7 @@ func (s *allowanceService) GetValidUsers(users []string) ([]allowances.Allowance
 
 	// validate usernames
 	for _, user := range users {
-		if err := validate.IsValidEmail(user); err != nil {
+		if err := validate.ValidateEmail(user); err != nil {
 			return nil, nil, fmt.Errorf("%s: %w", ErrInvalidUsername, err)
 		}
 	}
@@ -303,7 +303,7 @@ func (s *allowanceService) GetValidUsers(users []string) ([]allowances.Allowance
 func (s *allowanceService) CreateAllowance(username string) (*allowances.Allowance, error) {
 
 	// check if username is valid email
-	if err := validate.IsValidEmail(username); err != nil {
+	if err := validate.ValidateEmail(username); err != nil {
 		return nil, fmt.Errorf("%s: %v", ErrInvalidUsername, err)
 	}
 
@@ -472,7 +472,7 @@ func (s *allowanceService) CreateAllowance(username string) (*allowances.Allowan
 func (s *allowanceService) UpdateAllowance(cmd *allowances.Allowance) error {
 
 	// validate slug: redundant check, but good practice in case this is called by a different function
-	if !validate.IsValidUuid(cmd.Slug) {
+	if err := validate.ValidateUuid(cmd.Slug); err != nil {
 		return fmt.Errorf("%s: %s", ErrInvalidAllowanceSlug, cmd.Slug)
 	}
 

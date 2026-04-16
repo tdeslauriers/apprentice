@@ -676,7 +676,7 @@ func (h *handler) updateTemplate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// validate cadence
-	if err := cmd.Cadence.IsValidCadence(); err != nil {
+	if err := cmd.Cadence.ValidateCadence(); err != nil {
 		log.Error("failed to validate cadence", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusUnprocessableEntity,
@@ -687,7 +687,7 @@ func (h *handler) updateTemplate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// validate category
-	if err := cmd.Category.IsValidCategory(); err != nil {
+	if err := cmd.Category.ValidateCategory(); err != nil {
 		log.Error("failed to validate category", "err", err.Error())
 		e := connect.ErrorHttp{
 			StatusCode: http.StatusUnprocessableEntity,

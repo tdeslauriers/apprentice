@@ -57,7 +57,7 @@ type allowancePermissionsService struct {
 func (s *allowancePermissionsService) GetAllowancePermissions(username string) (map[string]exo.PermissionRecord, []exo.PermissionRecord, error) {
 
 	// validate is well formed email address: redundant, but good practice.
-	if err := validate.IsValidEmail(username); err != nil {
+	if err := validate.ValidateEmail(username); err != nil {
 		return nil, nil, err
 	}
 
@@ -99,10 +99,10 @@ func (s *allowancePermissionsService) GetAllowancePermissions(username string) (
 func (s *allowancePermissionsService) AddPermissionToAllowance(allowanceId, permissionId string) error {
 
 	// validate the allowanceId and permissionId are well formed uuids
-	if !validate.IsValidUuid(allowanceId) {
+	if err := validate.ValidateUuid(allowanceId); err != nil {
 		return fmt.Errorf("invalid allowance id: %s", allowanceId)
 	}
-	if !validate.IsValidUuid(permissionId) {
+	if err := validate.ValidateUuid(permissionId); err != nil {
 		return fmt.Errorf("invalid permission id: %s", permissionId)
 	}
 
@@ -127,10 +127,10 @@ func (s *allowancePermissionsService) AddPermissionToAllowance(allowanceId, perm
 func (s *allowancePermissionsService) RemovePermissionFromAllowance(allowanceId, permissionId string) error {
 
 	// validate the allowanceId and permissionId are well formed uuids
-	if !validate.IsValidUuid(allowanceId) {
+	if err := validate.ValidateUuid(allowanceId); err != nil {
 		return fmt.Errorf("invalid allowance id: %s", allowanceId)
 	}
-	if !validate.IsValidUuid(permissionId) {
+	if err := validate.ValidateUuid(permissionId); err != nil {
 		return fmt.Errorf("invalid permission id: %s", permissionId)
 	}
 

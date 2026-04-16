@@ -91,7 +91,7 @@ func (s *allowancePermissionsService) UpdateAllowancePermissions(
 
 	//validate the permission slugs are well formed uuids
 	for _, slug := range slugs {
-		if !validate.IsValidUuid(slug) {
+		if err := validate.ValidateUuid(slug); err != nil {
 			return nil, nil, fmt.Errorf("invalid permission slug: %s", slug)
 		}
 	}
