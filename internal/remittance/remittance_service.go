@@ -23,7 +23,7 @@ import (
 type Service interface {
 	// Disburse is a method to disburse allowances to the appropriate accounts
 	// based on the tasks/chores assigned and completed, accounting for satisfactory and proactive completion.
-	Disburse()
+	Disburse(ctx context.Context)
 }
 
 // NewRemittanceService creates a new RemittanceService interface, returning a pointer to the concrete implementation
@@ -55,7 +55,7 @@ type service struct {
 }
 
 // Disburse is a concrete implementation of the Disburse method in the RemittanceService interface
-func (s *service) Disburse() {
+func (s *service) Disburse(ctx context.Context) {
 
 	// generate telemetry -> in this case just a trace parent for web calls
 	telemetry := &connect.Telemetry{
@@ -64,7 +64,7 @@ func (s *service) Disburse() {
 	log := s.logger.With(telemetry.TelemetryFields()...)
 
 	// add telemetry to context for downstream calls
-	ctx := context.WithValue(context.Background(), connect.TelemetryKey, telemetry)
+	ctx = context.WithValue(ctx, connect.TelemetryKey, telemetry)
 
 	// will need jitter so that the services do not all run at the same time or disburse on top of each other
 	src := rand.NewSource(time.Now().UnixNano())

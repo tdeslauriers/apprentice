@@ -4,12 +4,14 @@ set -euo pipefail
 
 IMAGE_NAME="apprentice:latest"
 CONTAINER_NAME="apprentice-dev"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 
-docker build --pull --no-cache -t "${IMAGE_NAME}" .
+docker build --pull --no-cache -f "${REPO_ROOT}/Dockerfile" -t "${IMAGE_NAME}" "${REPO_ROOT}"
 
 docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
 
-docker run -d --rm --name "${CONTAINER_NAME}" -p $(op read "op://world_site/apprentice_service_container_dev/port"):$(op read "op://world_site/apprentice_service_container_dev/port") \
+docker run -d --rm --name "${CONTAINER_NAME}" -p "${APPRENTICE_SERVICE_PORT: -4}":"${APPRENTICE_SERVICE_PORT: -4}" \
     -e APPRENTICE_SERVICE_CLIENT_ID=$(op read "op://world_site/apprentice_service_container_dev/client_id") \
     -e APPRENTICE_SERVICE_PORT=":$(op read "op://world_site/apprentice_service_container_dev/port")" \
     -e APPRENTICE_CA_CERT="$(op document get "service_ca_dev_cert" --vault world_site | base64 -w 0)" \

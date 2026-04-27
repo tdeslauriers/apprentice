@@ -1,6 +1,7 @@
 package tasks
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log/slog"
@@ -20,10 +21,10 @@ import (
 type ScheduledService interface {
 
 	// CreateDailyTasks is a method to created daily tasks
-	CreateDailyTasks()
+	CreateDailyTasks(ctx context.Context)
 
 	// CreateWeeklyTasks is a method to create weekly tasks
-	CreateWeeklyTasks()
+	CreateWeeklyTasks(ctx context.Context)
 }
 
 // NewScheduledService creates a new ScheduledService interface, returning a pointer to the concrete implementation
@@ -51,7 +52,7 @@ type scheduledService struct {
 }
 
 // CreateDailyTasks is the concrete implementation of the CreateDailyTasks method in the ScheduledService interface
-func (s *scheduledService) CreateDailyTasks() {
+func (s *scheduledService) CreateDailyTasks(ctx context.Context) {
 
 	// there is more than one service instance, so each needs to check if others have already created tasks
 	// they also cant create tasks at the same time, so we need to build in some jitter
@@ -62,6 +63,10 @@ func (s *scheduledService) CreateDailyTasks() {
 
 	go func() {
 		for {
+			if ctx.Err() != nil {
+				s.logger.Info("stopping daily task scheduler")
+				return
+			}
 
 			loc, err := time.LoadLocation("America/Chicago")
 			if err != nil {
@@ -86,7 +91,15 @@ func (s *scheduledService) CreateDailyTasks() {
 			s.logger.Info(fmt.Sprintf("next scheduled daily task creation at %s", next.Format(time.RFC3339)))
 
 			timer := time.NewTimer(duration)
-			<-timer.C
+			select {
+			case <-ctx.Done():
+				if !timer.Stop() {
+					<-timer.C
+				}
+				s.logger.Info("stopping daily task scheduler")
+				return
+			case <-timer.C:
+			}
 
 			// generate daily tasks: includes check if tasks already created by another instance of the service
 			if err := s.generateScheduledTasks(tasks.Daily); err != nil {
@@ -100,7 +113,7 @@ func (s *scheduledService) CreateDailyTasks() {
 }
 
 // CreateWeeklyTasks is the concrete implementation of the CreateWeeklyTasks method in the ScheduledService interface
-func (s *scheduledService) CreateWeeklyTasks() {
+func (s *scheduledService) CreateWeeklyTasks(ctx context.Context) {
 
 	// will need jitter so that the services do not all run at the same time or disburse on top of each other
 	src := rand.NewSource(time.Now().UnixNano())
@@ -108,6 +121,10 @@ func (s *scheduledService) CreateWeeklyTasks() {
 
 	go func() {
 		for {
+			if ctx.Err() != nil {
+				s.logger.Info("stopping weekly task scheduler")
+				return
+			}
 
 			// schedule weekly tasks for Saturday 1 AM CST
 			loc, err := time.LoadLocation("America/Chicago")
@@ -138,7 +155,15 @@ func (s *scheduledService) CreateWeeklyTasks() {
 
 			duration := time.Until(next)
 			timer := time.NewTimer(duration)
-			<-timer.C
+			select {
+			case <-ctx.Done():
+				if !timer.Stop() {
+					<-timer.C
+				}
+				s.logger.Info("stopping weekly task scheduler")
+				return
+			case <-timer.C:
+			}
 
 			// generate weekly tasks: includes check if tasks already created by another instance of the service
 			if err := s.generateScheduledTasks(tasks.Weekly); err != nil {

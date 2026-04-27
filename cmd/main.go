@@ -1,9 +1,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/tdeslauriers/apprentice/internal/manager"
 	"github.com/tdeslauriers/apprentice/internal/util"
@@ -55,11 +58,14 @@ func main() {
 
 	defer mgr.CloseDb()
 
-	if err := mgr.Run(); err != nil {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if err := mgr.Run(ctx); err != nil {
 		logger.Error(fmt.Sprintf("failed to run %s task management service", def.ServiceName),
 			"err", err.Error())
 		os.Exit(1)
 	}
 
-	select {}
+	<-ctx.Done()
 }

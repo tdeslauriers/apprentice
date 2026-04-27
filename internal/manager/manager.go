@@ -1,6 +1,7 @@
 package manager
 
 import (
+	"context"
 	"crypto/tls"
 	"database/sql"
 	"encoding/base64"
@@ -28,7 +29,7 @@ import (
 // Manager is the interface for the engine that runs this service
 type Manager interface {
 	// Run runs the task/allowance service
-	Run() error
+	Run(ctx context.Context) error
 
 	// CloseDb closes the database connection
 	CloseDb() error
@@ -184,7 +185,7 @@ func (m *manager) CloseDb() error {
 	return nil
 }
 
-func (m *manager) Run() error {
+func (m *manager) Run(ctx context.Context) error {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", diagnostics.HealthCheckHandler)
@@ -248,15 +249,15 @@ func (m *manager) Run() error {
 		}
 	}()
 
-	// cleanup expired s2s tokens
-	m.cleanup.ExpiredS2s()
+	// ctxcleanup expired s2s tokens
+	m.cleanup.ExpiredS2s(ctx)
 
 	// generate scheduled tasks
-	m.task.CreateDailyTasks()
-	m.task.CreateWeeklyTasks()
+	m.task.CreateDailyTasks(ctx)
+	m.task.CreateWeeklyTasks(ctx)
 
 	// conduct remittance disbursement
-	m.remittance.Disburse()
+	m.remittance.Disburse(ctx)
 
 	return nil
 }
