@@ -2,7 +2,6 @@ package allowances
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -12,7 +11,6 @@ import (
 	"github.com/tdeslauriers/apprentice/internal/util"
 	"github.com/tdeslauriers/apprentice/pkg/api/allowances"
 	"github.com/tdeslauriers/carapace/pkg/connect"
-	"github.com/tdeslauriers/carapace/pkg/data"
 	exo "github.com/tdeslauriers/carapace/pkg/permissions"
 	"github.com/tdeslauriers/carapace/pkg/validate"
 )
@@ -37,10 +35,10 @@ type AllowancePermissionsService interface {
 
 // NewAllowancePermissionsService creates a new AllowancePermissionsService interface
 // and returns a pointer to a concrete implementation of the interface
-func NewAllowancePermissionsService(sql *sql.DB, i data.Indexer, c data.Cryptor) AllowancePermissionsService {
+func NewAllowancePermissionsService(ps permissions.Service) AllowancePermissionsService {
 
 	return &allowancePermissionsService{
-		permission: permissions.NewService(sql, i, c),
+		permission: ps,
 
 		logger: slog.Default().
 			With(util.PackageKey, util.PackageAllowances).

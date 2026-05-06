@@ -1,13 +1,7 @@
 package allowances
 
 import (
-	"database/sql"
-
-	"github.com/tdeslauriers/apprentice/internal/permissions"
-	"github.com/tdeslauriers/carapace/pkg/connect"
 	"github.com/tdeslauriers/carapace/pkg/data"
-	"github.com/tdeslauriers/carapace/pkg/jwt"
-	"github.com/tdeslauriers/carapace/pkg/session/provider"
 )
 
 const (
@@ -35,18 +29,15 @@ type Handler interface {
 
 // NewHandler creates a new Handler interface, returning a pointe(s) to the concrete implementation(s)
 func NewHandler(
-	s Service,
-	p permissions.Service,
-	s2s jwt.Verifier,
-	iam jwt.Verifier,
-	tkn provider.S2sTokenProvider,
-	identity *connect.S2sCaller,
+	ah AllowancesHandler,
+	aph AllowancePermissionsHandler,
+	acct AccountHandler,
 ) Handler {
 
 	return &handler{
-		AllowancesHandler:           NewAllowancesHandler(s, p, s2s, iam, tkn, identity),
-		AllowancePermissionsHandler: NewAllowancePermissionsHandler(s, s2s, iam),
-		AccountHandler:              NewAccountHandler(s, p, s2s, iam),
+		AllowancesHandler:           ah,
+		AllowancePermissionsHandler: aph,
+		AccountHandler:              acct,
 	}
 }
 
@@ -67,11 +58,16 @@ type Service interface {
 }
 
 // NewService creates a new Service interface, returning a pointer to the concrete implementation
-func NewService(sql *sql.DB, i data.Indexer, c data.Cryptor) Service {
+func NewService(
+	aps AllowancePermissionsService,
+	as AllowanceService,
+	es AllowanceErrorService,
+) Service {
+
 	return &service{
-		AllowancePermissionsService: NewAllowancePermissionsService(sql, i, c),
-		AllowanceService:            NewAllowanceService(sql, i, c),
-		AllowanceErrorService:       NewAllowanceErrorService(),
+		AllowancePermissionsService: aps,
+		AllowanceService:            as,
+		AllowanceErrorService:       es,
 	}
 }
 

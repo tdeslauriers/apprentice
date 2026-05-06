@@ -2,7 +2,7 @@ module github.com/tdeslauriers/apprentice
 
 go 1.25.0
 
-require github.com/tdeslauriers/carapace v0.4.4
+require github.com/tdeslauriers/carapace v0.4.8
 
 require (
 	github.com/tdeslauriers/ran v0.1.4 // indirect

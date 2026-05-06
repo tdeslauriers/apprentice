@@ -48,12 +48,18 @@ type AllowanceService interface {
 }
 
 // NewAllowanceService creates a new Service interface, returning a pointer to the concrete implementation
-func NewAllowanceService(sql *sql.DB, i data.Indexer, c data.Cryptor) AllowanceService {
+func NewAllowanceService(
+	ar AllowanceRepository,
+	i data.Indexer,
+	c data.Cryptor,
+	ps permissions.Service,
+) AllowanceService {
+
 	return &allowanceService{
-		sql:        NewAllowanceRepository(sql),
+		sql:        ar,
 		indexer:    i,
 		cryptor:    c,
-		permission: permissions.NewService(sql, i, c),
+		permission: ps,
 
 		logger: slog.Default().
 			With(slog.String(util.PackageKey, util.PackageAllowances)).

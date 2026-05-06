@@ -1,11 +1,15 @@
 package permissions
 
 import (
-	"database/sql"
-
+	"github.com/tdeslauriers/apprentice/internal/util"
 	"github.com/tdeslauriers/carapace/pkg/data"
 	exo "github.com/tdeslauriers/carapace/pkg/permissions"
 )
+
+// serivces that are allowed to create permission records in this service, ie, only this service.
+var AllowedServices = map[string]struct{}{
+	util.ServiceApprentice: {},
+}
 
 // Service is a top level interface for the permissions package acts as a service aggregator
 type Service interface {
@@ -15,10 +19,12 @@ type Service interface {
 
 // NewService creates a new Service interface
 // and returns a pointer to a concrete implementations of the interfaces
-func NewService(sql *sql.DB, i data.Indexer, c data.Cryptor) Service {
+func NewService(a AllowancePermissionsService, p exo.Service) Service {
 	return &service{
-		Service:                     exo.NewService(sql, i, c),
-		AllowancePermissionsService: NewAllowancePermissionsService(sql, i, c),
+		// Service:                     exo.NewService(sql, i, c, allowedServices),
+		// AllowancePermissionsService: NewAllowancePermissionsService(sql, i, c),
+		Service:                     p,
+		AllowancePermissionsService: a,
 	}
 }
 

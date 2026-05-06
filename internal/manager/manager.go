@@ -21,6 +21,7 @@ import (
 	"github.com/tdeslauriers/carapace/pkg/data"
 	"github.com/tdeslauriers/carapace/pkg/diagnostics"
 	"github.com/tdeslauriers/carapace/pkg/jwt"
+	exo "github.com/tdeslauriers/carapace/pkg/permissions"
 	"github.com/tdeslauriers/carapace/pkg/schedule"
 	"github.com/tdeslauriers/carapace/pkg/session/provider"
 	"github.com/tdeslauriers/carapace/pkg/sign"
@@ -141,6 +142,16 @@ func New(config *config.Config) (Manager, error) {
 
 	s2sTokenProvider := provider.NewS2sTokenProvider(s2s, s2sCreds, db, cryptor)
 
+	// permissions services
+	apSvc := permissions.NewAllowancePermissionsService(db, indexer, cryptor)
+	exoPermSvc := exo.NewService(db, indexer, cryptor, permissions.AllowedServices)
+	permSvc := permissions.NewService(apSvc, exoPermSvc)
+
+	// allowance services
+	aapSvc := allowances.NewAllowancePermissionsService(permSvc)
+	aSvc := allowances.NewAllowanceService(allowances.NewAllowanceRepository(db), indexer, cryptor, permSvc)
+	aErrSvc := allowances.NewAllowanceErrorService()
+
 	return &manager{
 		config:           *config,
 		serverTls:        serverTlsConfig,
@@ -149,11 +160,11 @@ func New(config *config.Config) (Manager, error) {
 		s2sVerifier:      jwt.NewVerifier(config.ServiceName, s2sPublicKey),
 		iamVerifier:      jwt.NewVerifier(config.ServiceName, iamPublicKey),
 		identity:         identity,
-		allowance:        allowances.NewService(db, indexer, cryptor),
+		allowance:        allowances.NewService(aapSvc, aSvc, aErrSvc),
 		remittance:       remittance.NewService(db, indexer, cryptor, s2sTokenProvider, identity),
 		template:         templates.NewService(db, cryptor),
 		task:             tasks.NewService(db, indexer, cryptor),
-		permissions:      permissions.NewService(db, indexer, cryptor),
+		permissions:      permSvc,
 		cleanup:          schedule.NewCleanup(db),
 
 		logger: slog.Default().
@@ -198,12 +209,9 @@ func (m *manager) Run(ctx context.Context) error {
 
 	// allowances
 	allowance := allowances.NewHandler(
-		m.allowance,
-		m.permissions,
-		m.s2sVerifier,
-		m.iamVerifier,
-		m.s2sTokenProvider,
-		m.identity,
+		allowances.NewAllowancesHandler(m.allowance, m.permissions, m.s2sVerifier, m.iamVerifier, m.s2sTokenProvider, m.identity),
+		allowances.NewAllowancePermissionsHandler(m.allowance, m.s2sVerifier, m.iamVerifier),
+		allowances.NewAccountHandler(m.allowance, m.permissions, m.s2sVerifier, m.iamVerifier),
 	)
 	mux.HandleFunc("/account", allowance.HandleAccount)
 	mux.HandleFunc("/allowances/{slug...}", allowance.HandleAllowances)

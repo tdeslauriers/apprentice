@@ -18,6 +18,7 @@ type AllowanceErrorService interface {
 // NewAllowanceErrorService creates a new AllowanceErrorService interface, returning a pointer to the concrete implementation
 func NewAllowanceErrorService() AllowanceErrorService {
 	return &allowanceErrorService{
+		
 		logger: slog.Default().
 			With(slog.String(util.ServiceKey, util.ServiceApprentice)).
 			With(slog.String(util.PackageKey, util.PackageAllowances)).
