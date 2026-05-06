@@ -209,9 +209,25 @@ func (m *manager) Run(ctx context.Context) error {
 
 	// allowances
 	allowance := allowances.NewHandler(
-		allowances.NewAllowancesHandler(m.allowance, m.permissions, m.s2sVerifier, m.iamVerifier, m.s2sTokenProvider, m.identity),
-		allowances.NewAllowancePermissionsHandler(m.allowance, m.s2sVerifier, m.iamVerifier),
-		allowances.NewAccountHandler(m.allowance, m.permissions, m.s2sVerifier, m.iamVerifier),
+		allowances.NewAllowancesHandler(
+			m.allowance,
+			m.permissions,
+			m.s2sVerifier,
+			m.iamVerifier,
+			m.s2sTokenProvider,
+			m.identity,
+		),
+		allowances.NewAllowancePermissionsHandler(
+			m.allowance,
+			m.s2sVerifier,
+			m.iamVerifier,
+		),
+		allowances.NewAccountHandler(
+			m.allowance,
+			m.permissions,
+			m.s2sVerifier,
+			m.iamVerifier,
+		),
 	)
 	mux.HandleFunc("/account", allowance.HandleAccount)
 	mux.HandleFunc("/allowances/{slug...}", allowance.HandleAllowances)
