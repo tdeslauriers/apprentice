@@ -10,7 +10,7 @@ import (
 	"github.com/tdeslauriers/apprentice/internal/permissions"
 	"github.com/tdeslauriers/apprentice/internal/util"
 	"github.com/tdeslauriers/apprentice/pkg/api/allowances"
-	"github.com/tdeslauriers/carapace/pkg/connect"
+	"github.com/tdeslauriers/carapace/pkg/connect/telemetry"
 	exo "github.com/tdeslauriers/carapace/pkg/permissions"
 	"github.com/tdeslauriers/carapace/pkg/validate"
 )
@@ -76,7 +76,7 @@ func (s *allowancePermissionsService) UpdateAllowancePermissions(
 	// create local log to hold telmetry from context
 	// get telemetry from context -> set up log
 	log := s.logger
-	telemetry, ok := ctx.Value(connect.TelemetryKey).(*connect.Telemetry)
+	telemetry, ok := ctx.Value(telemetry.TelemetryKey).(*telemetry.Telemetry)
 	if ok && telemetry != nil {
 		log = log.With(telemetry.TelemetryFields()...)
 	} else {

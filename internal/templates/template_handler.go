@@ -19,6 +19,7 @@ import (
 	api "github.com/tdeslauriers/apprentice/pkg/api/allowances"
 	"github.com/tdeslauriers/apprentice/pkg/api/templates"
 	"github.com/tdeslauriers/carapace/pkg/connect"
+	"github.com/tdeslauriers/carapace/pkg/connect/telemetry"
 	"github.com/tdeslauriers/carapace/pkg/jwt"
 	"github.com/tdeslauriers/carapace/pkg/session/provider"
 )
@@ -102,7 +103,7 @@ func (h *handler) HandleTemplates(w http.ResponseWriter, r *http.Request) {
 		return
 	default:
 		// get telemetry from request
-		tel := connect.ObtainTelemetry(r, h.logger)
+		tel := telemetry.ObtainHttpTelemetry(r, h.logger)
 		log := h.logger.With(tel.TelemetryFields()...)
 
 		log.Error(fmt.Sprintf("unsupported method %s for endpoint %s", r.Method, r.URL.Path))
@@ -120,11 +121,11 @@ func (h *handler) HandleTemplates(w http.ResponseWriter, r *http.Request) {
 func (h *handler) getAssignees(w http.ResponseWriter, r *http.Request) {
 
 	// get telemetry from request
-	tel := connect.ObtainTelemetry(r, h.logger)
+	tel := telemetry.ObtainHttpTelemetry(r, h.logger)
 	log := h.logger.With(tel.TelemetryFields()...)
 
 	// add telemetry to context for downstream calls + service functions
-	ctx := context.WithValue(r.Context(), connect.TelemetryKey, tel)
+	ctx := context.WithValue(r.Context(), telemetry.TelemetryKey, tel)
 
 	// validate s2s token
 	svcToken := r.Header.Get("Service-Authorization")
@@ -215,11 +216,11 @@ func (h *handler) getAssignees(w http.ResponseWriter, r *http.Request) {
 func (h *handler) getTemplates(w http.ResponseWriter, r *http.Request) {
 
 	// get telemetry from request
-	tel := connect.ObtainTelemetry(r, h.logger)
+	tel := telemetry.ObtainHttpTelemetry(r, h.logger)
 	log := h.logger.With(tel.TelemetryFields()...)
 
 	// add telemetry to context for downstream calls + service functions
-	ctx := context.WithValue(r.Context(), connect.TelemetryKey, tel)
+	ctx := context.WithValue(r.Context(), telemetry.TelemetryKey, tel)
 
 	// validate s2s token
 	svcToken := r.Header.Get("Service-Authorization")
@@ -328,11 +329,11 @@ func (h *handler) getTemplates(w http.ResponseWriter, r *http.Request) {
 func (h *handler) createTemplate(w http.ResponseWriter, r *http.Request) {
 
 	// get telemetry from request
-	tel := connect.ObtainTelemetry(r, h.logger)
+	tel := telemetry.ObtainHttpTelemetry(r, h.logger)
 	log := h.logger.With(tel.TelemetryFields()...)
 
 	// add telemetry to context for downstream calls + service functions
-	ctx := context.WithValue(r.Context(), connect.TelemetryKey, tel)
+	ctx := context.WithValue(r.Context(), telemetry.TelemetryKey, tel)
 
 	// validate s2s token
 	svcToken := r.Header.Get("Service-Authorization")
@@ -492,11 +493,11 @@ func (h *handler) createTemplate(w http.ResponseWriter, r *http.Request) {
 func (h *handler) getTemplate(w http.ResponseWriter, r *http.Request) {
 
 	// get telemetry from request
-	tel := connect.ObtainTelemetry(r, h.logger)
+	tel := telemetry.ObtainHttpTelemetry(r, h.logger)
 	log := h.logger.With(tel.TelemetryFields()...)
 
 	// add telemetry to context for downstream calls + service functions
-	ctx := context.WithValue(r.Context(), connect.TelemetryKey, tel)
+	ctx := context.WithValue(r.Context(), telemetry.TelemetryKey, tel)
 
 	// validate s2s token
 	svcToken := r.Header.Get("Service-Authorization")
@@ -605,11 +606,11 @@ func (h *handler) getTemplate(w http.ResponseWriter, r *http.Request) {
 func (h *handler) updateTemplate(w http.ResponseWriter, r *http.Request) {
 
 	// get telemetry from request
-	tel := connect.ObtainTelemetry(r, h.logger)
+	tel := telemetry.ObtainHttpTelemetry(r, h.logger)
 	log := h.logger.With(tel.TelemetryFields()...)
 
 	// add telemetry to context for downstream calls + service functions
-	ctx := context.WithValue(r.Context(), connect.TelemetryKey, tel)
+	ctx := context.WithValue(r.Context(), telemetry.TelemetryKey, tel)
 
 	// validate s2s token
 	svcToken := r.Header.Get("Service-Authorization")

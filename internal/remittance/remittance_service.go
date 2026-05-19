@@ -14,6 +14,7 @@ import (
 	"github.com/tdeslauriers/shaw/pkg/api/user"
 
 	"github.com/tdeslauriers/carapace/pkg/connect"
+	"github.com/tdeslauriers/carapace/pkg/connect/telemetry"
 	"github.com/tdeslauriers/carapace/pkg/data"
 	"github.com/tdeslauriers/carapace/pkg/session/provider"
 )
@@ -57,14 +58,14 @@ type service struct {
 // Disburse is a concrete implementation of the Disburse method in the RemittanceService interface
 func (s *service) Disburse(ctx context.Context) {
 
-	// generate telemetry -> in this case just a trace parent for web calls
-	telemetry := &connect.Telemetry{
-		Traceparent: *connect.GenerateTraceParent(),
+	// generate tel -> in this case just a trace parent for web calls
+	tel := &telemetry.Telemetry{
+		Traceparent: *telemetry.NewTraceparent(),
 	}
-	log := s.logger.With(telemetry.TelemetryFields()...)
+	log := s.logger.With(tel.TelemetryFields()...)
 
 	// add telemetry to context for downstream calls
-	ctx = context.WithValue(ctx, connect.TelemetryKey, telemetry)
+	ctx = context.WithValue(ctx, telemetry.TelemetryKey, tel)
 
 	// will need jitter so that the services do not all run at the same time or disburse on top of each other
 	src := rand.NewSource(time.Now().UnixNano())

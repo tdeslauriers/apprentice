@@ -14,7 +14,7 @@ import (
 	"github.com/tdeslauriers/apprentice/internal/util"
 	"github.com/tdeslauriers/apprentice/pkg/api/allowances"
 	api "github.com/tdeslauriers/apprentice/pkg/api/templates"
-	"github.com/tdeslauriers/carapace/pkg/connect"
+	"github.com/tdeslauriers/carapace/pkg/connect/telemetry"
 	"github.com/tdeslauriers/carapace/pkg/data"
 	"github.com/tdeslauriers/carapace/pkg/validate"
 )
@@ -281,8 +281,8 @@ func (s *templateService) CreateTemplate(ctx context.Context, cmd api.TemplateCm
 
 	// add telemetry fields to logger if exists in context
 	log := s.logger
-	if telemetry, ok := connect.GetTelemetryFromContext(ctx); ok && telemetry != nil {
-		log = log.With(telemetry.TelemetryFields()...)
+	if tel, ok := ctx.Value(telemetry.TelemetryKey).(*telemetry.Telemetry); ok && tel != nil {
+		log = log.With(tel.TelemetryFields()...)
 	} else {
 		log.Warn("no telemetry found in context for CreateTemplate")
 	}
@@ -330,8 +330,8 @@ func (s *templateService) UpdateTemplate(ctx context.Context, t *api.TemplateRec
 
 	// add telemetry fields to logger if exists in context
 	log := s.logger
-	if telemetry, ok := connect.GetTelemetryFromContext(ctx); ok && telemetry != nil {
-		log = log.With(telemetry.TelemetryFields()...)
+	if tel, ok := ctx.Value(telemetry.TelemetryKey).(*telemetry.Telemetry); ok && tel != nil {
+		log = log.With(tel.TelemetryFields()...)
 	} else {
 		s.logger.Warn("no telemetry found in context for UpdateTemplate")
 	}
@@ -360,9 +360,9 @@ func (s *templateService) CreateAllowanceXref(
 ) (*AllowanceTemplateXref, error) {
 
 	log := s.logger
-	// add telemetry fields to logger if exists in context
-	if telemetry, ok := connect.GetTelemetryFromContext(ctx); ok && telemetry != nil {
-		log = log.With(telemetry.TelemetryFields()...)
+	// add tel fields to logger if exists in context
+	if tel, ok := ctx.Value(telemetry.TelemetryKey).(*telemetry.Telemetry); ok && tel != nil {
+		log = log.With(tel.TelemetryFields()...)
 	} else {
 		log.Warn("no telemetry found in context for CreateAllowanceXref")
 	}
@@ -389,8 +389,8 @@ func (s *templateService) DeleteAllowanceXref(ctx context.Context, t *api.Templa
 
 	// add telemetry fields to logger if exists in context
 	log := s.logger
-	if telemetry, ok := connect.GetTelemetryFromContext(ctx); ok && telemetry != nil {
-		log = log.With(telemetry.TelemetryFields()...)
+	if tel, ok := ctx.Value(telemetry.TelemetryKey).(*telemetry.Telemetry); ok && tel != nil {
+		log = log.With(tel.TelemetryFields()...)
 	} else {
 		s.logger.Warn("no telemetry found in context for DeleteAllowanceXref")
 	}
@@ -414,8 +414,8 @@ func (s *templateService) CreateTaskXref(
 
 	// add telemetry fields to logger if exists in context
 	log := s.logger
-	if telemetry, ok := connect.GetTelemetryFromContext(ctx); ok && telemetry != nil {
-		log = log.With(telemetry.TelemetryFields()...)
+	if tel, ok := ctx.Value(telemetry.TelemetryKey).(*telemetry.Telemetry); ok && tel != nil {
+		log = log.With(tel.TelemetryFields()...)
 	} else {
 		log.Warn("no telemetry found in context for CreateTaskXref")
 	}

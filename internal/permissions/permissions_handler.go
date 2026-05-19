@@ -10,6 +10,7 @@ import (
 	"github.com/tdeslauriers/apprentice/internal/util"
 
 	"github.com/tdeslauriers/carapace/pkg/connect"
+	"github.com/tdeslauriers/carapace/pkg/connect/telemetry"
 	"github.com/tdeslauriers/carapace/pkg/jwt"
 	exo "github.com/tdeslauriers/carapace/pkg/permissions"
 )
@@ -76,7 +77,7 @@ func (h *handler) HandlePermissions(w http.ResponseWriter, r *http.Request) {
 		return
 	default:
 		// get telemetry from request
-		tel := connect.ObtainTelemetry(r, h.logger)
+		tel := telemetry.ObtainHttpTelemetry(r, h.logger)
 		log := h.logger.With(tel.TelemetryFields()...)
 
 		log.Error(fmt.Sprintf("unsupported method %s for endpoint %s", r.Method, r.URL.Path))
@@ -93,7 +94,7 @@ func (h *handler) HandlePermissions(w http.ResponseWriter, r *http.Request) {
 func (h *handler) getPermissions(w http.ResponseWriter, r *http.Request) {
 
 	// get telemetry from request
-	tel := connect.ObtainTelemetry(r, h.logger)
+	tel := telemetry.ObtainHttpTelemetry(r, h.logger)
 	log := h.logger.With(tel.TelemetryFields()...)
 
 	// validate the service token
@@ -150,7 +151,7 @@ func (h *handler) getPermissions(w http.ResponseWriter, r *http.Request) {
 func (h *handler) getPermission(w http.ResponseWriter, r *http.Request) {
 
 	// get telemetry from request
-	tel := connect.ObtainTelemetry(r, h.logger)
+	tel := telemetry.ObtainHttpTelemetry(r, h.logger)
 	log := h.logger.With(tel.TelemetryFields()...)
 
 	// validate the service token
@@ -216,7 +217,7 @@ func (h *handler) getPermission(w http.ResponseWriter, r *http.Request) {
 func (h *handler) createPermission(w http.ResponseWriter, r *http.Request) {
 
 	// get telemetry from request
-	tel := connect.ObtainTelemetry(r, h.logger)
+	tel := telemetry.ObtainHttpTelemetry(r, h.logger)
 	log := h.logger.With(tel.TelemetryFields()...)
 
 	// validate the service token
@@ -316,7 +317,7 @@ func (h *handler) createPermission(w http.ResponseWriter, r *http.Request) {
 func (h *handler) updatePermission(w http.ResponseWriter, r *http.Request) {
 
 	// get telemetry from request
-	tel := connect.ObtainTelemetry(r, h.logger)
+	tel := telemetry.ObtainHttpTelemetry(r, h.logger)
 	log := h.logger.With(tel.TelemetryFields()...)
 
 	// validate the service token

@@ -265,19 +265,12 @@ func (m *manager) Run(ctx context.Context) error {
 	)
 	mux.HandleFunc("/permissions/{slug...}", permission.HandlePermissions)
 
-	managerServer := &connect.TlsServer{
-		Addr:      m.config.ServicePort,
-		Mux:       mux,
-		TlsConfig: m.serverTls,
-	}
-
-	go func() {
-
-		m.logger.Info(fmt.Sprintf("starting %s task management service on port %s", m.config.ServiceName, managerServer.Addr[1:]))
-		if err := managerServer.Initialize(); err != http.ErrServerClosed {
-			m.logger.Error(fmt.Sprintf("failed to start %s task management service: %v", m.config.ServiceName, err))
-		}
-	}()
+	// instantiate the server with the mux and tls config
+	managerServer := connect.NewTlsServer(
+		m.config.ServicePort,
+		mux,
+		m.serverTls,
+	)
 
 	// ctxcleanup expired s2s tokens
 	m.cleanup.ExpiredS2s(ctx)
@@ -288,6 +281,11 @@ func (m *manager) Run(ctx context.Context) error {
 
 	// conduct remittance disbursement
 	m.remittance.Disburse(ctx)
+
+	m.logger.Info(fmt.Sprintf("starting %s task management service on port %s", m.config.ServiceName, m.config.ServicePort[1:]))
+	if err := managerServer.Initialize(ctx); err != nil && err != http.ErrServerClosed {
+		m.logger.Error(fmt.Sprintf("failed to start %s task management service: %v", m.config.ServiceName, err))
+	}
 
 	return nil
 }

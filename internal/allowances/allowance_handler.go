@@ -13,6 +13,7 @@ import (
 	"github.com/tdeslauriers/apprentice/internal/util"
 	"github.com/tdeslauriers/apprentice/pkg/api/allowances"
 	"github.com/tdeslauriers/carapace/pkg/connect"
+	"github.com/tdeslauriers/carapace/pkg/connect/telemetry"
 	"github.com/tdeslauriers/carapace/pkg/data"
 	"github.com/tdeslauriers/carapace/pkg/jwt"
 	"github.com/tdeslauriers/carapace/pkg/session/provider"
@@ -99,7 +100,7 @@ func (h *allowancesHandler) HandleAllowances(w http.ResponseWriter, r *http.Requ
 		}
 	default:
 		// get telemetry from request
-		tel := connect.ObtainTelemetry(r, h.logger)
+		tel := telemetry.ObtainHttpTelemetry(r, h.logger)
 		log := h.logger.With(tel.TelemetryFields()...)
 
 		log.Error(fmt.Sprintf("unsupported method %s for endpoint %s", r.Method, r.URL.Path))
@@ -116,7 +117,7 @@ func (h *allowancesHandler) HandleAllowances(w http.ResponseWriter, r *http.Requ
 func (h *allowancesHandler) getAll(w http.ResponseWriter, r *http.Request) {
 
 	// get telemetry from request
-	tel := connect.ObtainTelemetry(r, h.logger)
+	tel := telemetry.ObtainHttpTelemetry(r, h.logger)
 	log := h.logger.With(tel.TelemetryFields()...)
 
 	// validate s2stoken
@@ -168,7 +169,7 @@ func (h *allowancesHandler) getAll(w http.ResponseWriter, r *http.Request) {
 func (h *allowancesHandler) getAllowance(w http.ResponseWriter, r *http.Request) {
 
 	// get telemetry from request
-	tel := connect.ObtainTelemetry(r, h.logger)
+	tel := telemetry.ObtainHttpTelemetry(r, h.logger)
 	log := h.logger.With(tel.TelemetryFields()...)
 
 	// validate s2stoken
@@ -252,11 +253,11 @@ func (h *allowancesHandler) getAllowance(w http.ResponseWriter, r *http.Request)
 func (h *allowancesHandler) createAllowance(w http.ResponseWriter, r *http.Request) {
 
 	// get telemetry from request
-	tel := connect.ObtainTelemetry(r, h.logger)
+	tel := telemetry.ObtainHttpTelemetry(r, h.logger)
 	log := h.logger.With(tel.TelemetryFields()...)
 
 	// add telemetry to context for downstream calls + service functions
-	ctx := context.WithValue(r.Context(), connect.TelemetryKey, tel)
+	ctx := context.WithValue(r.Context(), telemetry.TelemetryKey, tel)
 
 	// validate s2stoken
 	svcToken := r.Header.Get("Service-Authorization")
@@ -456,7 +457,7 @@ func (h *allowancesHandler) createAllowance(w http.ResponseWriter, r *http.Reque
 func (h *allowancesHandler) updateAllowance(w http.ResponseWriter, r *http.Request) {
 
 	// get telemetry from request
-	tel := connect.ObtainTelemetry(r, h.logger)
+	tel := telemetry.ObtainHttpTelemetry(r, h.logger)
 	log := h.logger.With(tel.TelemetryFields()...)
 
 	// validate s2stoken
