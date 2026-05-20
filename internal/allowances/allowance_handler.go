@@ -128,7 +128,7 @@ func (h *allowancesHandler) getAll(w http.ResponseWriter, r *http.Request) {
 		connect.RespondAuthFailure(connect.S2s, err, w)
 		return
 	}
-	log = log.With("requesting_service", authedSvc.Claims.Subject)
+	log = log.With("principal_service", authedSvc.Claims.Subject)
 
 	// validate iam token
 	accessToken := r.Header.Get("Authorization")
@@ -138,7 +138,7 @@ func (h *allowancesHandler) getAll(w http.ResponseWriter, r *http.Request) {
 		connect.RespondAuthFailure(connect.User, err, w)
 		return
 	}
-	log = log.With("actor", authedUser.Claims.Subject)
+	log = log.With("principal_user", authedUser.Claims.Subject)
 
 	// scope auth check is sufficient, no need to get permissions for this endpoint at this time.
 
@@ -180,7 +180,7 @@ func (h *allowancesHandler) getAllowance(w http.ResponseWriter, r *http.Request)
 		connect.RespondAuthFailure(connect.S2s, err, w)
 		return
 	}
-	log = log.With("requesting_service", authedSvc.Claims.Subject)
+	log = log.With("principal_service", authedSvc.Claims.Subject)
 
 	// validate iam token
 	accessToken := r.Header.Get("Authorization")
@@ -190,7 +190,7 @@ func (h *allowancesHandler) getAllowance(w http.ResponseWriter, r *http.Request)
 		connect.RespondAuthFailure(connect.User, err, w)
 		return
 	}
-	log = log.With("actor", authedUser.Claims.Subject)
+	log = log.With("principal_user", authedUser.Claims.Subject)
 
 	// get permissions
 	pm, _, err := h.permission.GetAllowancePermissions(authedUser.Claims.Subject)
@@ -267,7 +267,7 @@ func (h *allowancesHandler) createAllowance(w http.ResponseWriter, r *http.Reque
 		connect.RespondAuthFailure(connect.S2s, err, w)
 		return
 	}
-	log = log.With("requesting_service", authedSvc.Claims.Subject)
+	log = log.With("principal_service", authedSvc.Claims.Subject)
 
 	// validate iam token
 	accessToken := r.Header.Get("Authorization")
@@ -277,7 +277,7 @@ func (h *allowancesHandler) createAllowance(w http.ResponseWriter, r *http.Reque
 		connect.RespondAuthFailure(connect.User, err, w)
 		return
 	}
-	log = log.With("actor", authedUser.Claims.Subject)
+	log = log.With("principal_user", authedUser.Claims.Subject)
 
 	// get permissions and validate user has permission to create allowance accounts, ie, payroll permission
 	pm, _, err := h.permission.GetAllowancePermissions(authedUser.Claims.Subject)
@@ -468,7 +468,7 @@ func (h *allowancesHandler) updateAllowance(w http.ResponseWriter, r *http.Reque
 		connect.RespondAuthFailure(connect.S2s, err, w)
 		return
 	}
-	log = log.With("requesting_service", authedSvc.Claims.Subject)
+	log = log.With("principal_service", authedSvc.Claims.Subject)
 
 	// validate iam token
 	accessToken := r.Header.Get("Authorization")
@@ -478,7 +478,7 @@ func (h *allowancesHandler) updateAllowance(w http.ResponseWriter, r *http.Reque
 		connect.RespondAuthFailure(connect.User, err, w)
 		return
 	}
-	log = log.With("actor", authedUser.Claims.Subject)
+	log = log.With("principal_user", authedUser.Claims.Subject)
 
 	// get the url slug from the request
 	slug, err := connect.GetValidSlug(r)

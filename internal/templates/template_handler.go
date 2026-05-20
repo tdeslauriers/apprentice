@@ -135,7 +135,7 @@ func (h *handler) getAssignees(w http.ResponseWriter, r *http.Request) {
 		connect.RespondAuthFailure(connect.S2s, err, w)
 		return
 	}
-	log = log.With("requesting_service", authedSvc.Claims.Subject)
+	log = log.With("principal_service", authedSvc.Claims.Subject)
 
 	// validate iam token
 	accessToken := r.Header.Get("Authorization")
@@ -145,7 +145,7 @@ func (h *handler) getAssignees(w http.ResponseWriter, r *http.Request) {
 		connect.RespondAuthFailure(connect.User, err, w)
 		return
 	}
-	log = log.With("actor", authedUser.Claims.Subject)
+	log = log.With("principal_user", authedUser.Claims.Subject)
 
 	// get identity service token
 	identityS2sToken, err := h.tkn.GetServiceToken(ctx, util.ServiceIdentity)
@@ -230,7 +230,7 @@ func (h *handler) getTemplates(w http.ResponseWriter, r *http.Request) {
 		connect.RespondAuthFailure(connect.S2s, err, w)
 		return
 	}
-	log = log.With("requesting_service", authedSvc.Claims.Subject)
+	log = log.With("principal_service", authedSvc.Claims.Subject)
 
 	// validate iam token
 	accessToken := r.Header.Get("Authorization")
@@ -240,7 +240,7 @@ func (h *handler) getTemplates(w http.ResponseWriter, r *http.Request) {
 		connect.RespondAuthFailure(connect.User, err, w)
 		return
 	}
-	log = log.With("actor", authedUser.Claims.Subject)
+	log = log.With("principal_user", authedUser.Claims.Subject)
 
 	// get all temps from the database
 	temps, err := h.template.GetTemplates()
@@ -343,7 +343,7 @@ func (h *handler) createTemplate(w http.ResponseWriter, r *http.Request) {
 		connect.RespondAuthFailure(connect.S2s, err, w)
 		return
 	}
-	log = log.With("requesting_service", authedSvc.Claims.Subject)
+	log = log.With("principal_service", authedSvc.Claims.Subject)
 
 	// validate iam token
 	accessToken := r.Header.Get("Authorization")
@@ -353,7 +353,7 @@ func (h *handler) createTemplate(w http.ResponseWriter, r *http.Request) {
 		connect.RespondAuthFailure(connect.User, err, w)
 		return
 	}
-	log = log.With("actor", authedUser.Claims.Subject)
+	log = log.With("principal_user", authedUser.Claims.Subject)
 
 	// decode request body
 	var cmd templates.TemplateCmd
@@ -507,7 +507,7 @@ func (h *handler) getTemplate(w http.ResponseWriter, r *http.Request) {
 		connect.RespondAuthFailure(connect.S2s, err, w)
 		return
 	}
-	log = log.With("requesting_service", authedSvc.Claims.Subject)
+	log = log.With("principal_service", authedSvc.Claims.Subject)
 
 	// validate iam token
 	accessToken := r.Header.Get("Authorization")
@@ -517,7 +517,7 @@ func (h *handler) getTemplate(w http.ResponseWriter, r *http.Request) {
 		connect.RespondAuthFailure(connect.User, err, w)
 		return
 	}
-	log = log.With("actor", authedUser.Claims.Subject)
+	log = log.With("principal_user", authedUser.Claims.Subject)
 
 	slug, err := connect.GetValidSlug(r)
 	if err != nil {
@@ -620,7 +620,7 @@ func (h *handler) updateTemplate(w http.ResponseWriter, r *http.Request) {
 		connect.RespondAuthFailure(connect.S2s, err, w)
 		return
 	}
-	log = log.With("requesting_service", authedSvc.Claims.Subject)
+	log = log.With("principal_service", authedSvc.Claims.Subject)
 
 	// validate iam token
 	accessToken := r.Header.Get("Authorization")
@@ -630,7 +630,7 @@ func (h *handler) updateTemplate(w http.ResponseWriter, r *http.Request) {
 		connect.RespondAuthFailure(connect.User, err, w)
 		return
 	}
-	log = log.With("actor", authedUser.Claims.Subject)
+	log = log.With("principal_user", authedUser.Claims.Subject)
 
 	// get slug from the request url
 	slug, err := connect.GetValidSlug(r)

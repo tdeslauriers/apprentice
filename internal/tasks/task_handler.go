@@ -120,7 +120,7 @@ func (h *handler) getTasks(w http.ResponseWriter, r *http.Request) {
 		connect.RespondAuthFailure(connect.S2s, err, w)
 		return
 	}
-	log = log.With("requesting_service", authedSvc.Claims.Subject)
+	log = log.With("principal_service", authedSvc.Claims.Subject)
 
 	// validate iam token
 	// need subject to determine fine grain permissions
@@ -131,7 +131,7 @@ func (h *handler) getTasks(w http.ResponseWriter, r *http.Request) {
 		connect.RespondAuthFailure(connect.User, err, w)
 		return
 	}
-	log = log.With("actor", authedUser.Claims.Subject)
+	log = log.With("principal_user", authedUser.Claims.Subject)
 
 	// get query params
 	params := r.URL.Query()
@@ -281,7 +281,7 @@ func (h *handler) updateTaskStatus(w http.ResponseWriter, r *http.Request) {
 		connect.RespondAuthFailure(connect.S2s, err, w)
 		return
 	}
-	log = log.With("requesting_service", authedSvc.Claims.Subject)
+	log = log.With("principal_service", authedSvc.Claims.Subject)
 
 	// validate iam token
 	// need the princpal to determine fine grain permissions
@@ -292,7 +292,7 @@ func (h *handler) updateTaskStatus(w http.ResponseWriter, r *http.Request) {
 		connect.RespondAuthFailure(connect.User, err, w)
 		return
 	}
-	log = log.With("actor", authedUser.Claims.Subject)
+	log = log.With("principal_user", authedUser.Claims.Subject)
 
 	// decode request body
 	var cmd api.TaskStatusCmd

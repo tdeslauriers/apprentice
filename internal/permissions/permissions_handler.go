@@ -105,7 +105,7 @@ func (h *handler) getPermissions(w http.ResponseWriter, r *http.Request) {
 		connect.RespondAuthFailure(connect.S2s, err, w)
 		return
 	}
-	log = log.With("requesting_service", authedSvc.Claims.Subject)
+	log = log.With("principal_service", authedSvc.Claims.Subject)
 
 	// validate iam token
 	// need subject to determine fine grain permissions
@@ -116,7 +116,7 @@ func (h *handler) getPermissions(w http.ResponseWriter, r *http.Request) {
 		connect.RespondAuthFailure(connect.User, err, w)
 		return
 	}
-	log = log.With("actor", authedUser.Claims.Subject)
+	log = log.With("principal_user", authedUser.Claims.Subject)
 
 	// scope check is enough, no need to get permissions for this endpoint at this time.
 
@@ -162,7 +162,7 @@ func (h *handler) getPermission(w http.ResponseWriter, r *http.Request) {
 		connect.RespondAuthFailure(connect.S2s, err, w)
 		return
 	}
-	log = log.With("requesting_service", authedSvc.Claims.Subject)
+	log = log.With("principal_service", authedSvc.Claims.Subject)
 
 	// validate iam token
 	// need subject to determine fine grain permissions
@@ -173,7 +173,7 @@ func (h *handler) getPermission(w http.ResponseWriter, r *http.Request) {
 		connect.RespondAuthFailure(connect.User, err, w)
 		return
 	}
-	log = log.With("actor", authedUser.Claims.Subject)
+	log = log.With("principal_user", authedUser.Claims.Subject)
 
 	// extract slug from request URL
 	slug, err := connect.GetValidSlug(r)
@@ -228,7 +228,7 @@ func (h *handler) createPermission(w http.ResponseWriter, r *http.Request) {
 		connect.RespondAuthFailure(connect.S2s, err, w)
 		return
 	}
-	log = log.With("requesting_service", authedSvc.Claims.Subject)
+	log = log.With("principal_service", authedSvc.Claims.Subject)
 
 	// validate iam token
 	iamToken := r.Header.Get("Authorization")
@@ -238,7 +238,7 @@ func (h *handler) createPermission(w http.ResponseWriter, r *http.Request) {
 		connect.RespondAuthFailure(connect.User, err, w)
 		return
 	}
-	log = log.With("actor", authedUser.Claims.Subject)
+	log = log.With("principal_user", authedUser.Claims.Subject)
 
 	// parse the permission from the request body
 	var cmd exo.Permission
@@ -328,7 +328,7 @@ func (h *handler) updatePermission(w http.ResponseWriter, r *http.Request) {
 		connect.RespondAuthFailure(connect.S2s, err, w)
 		return
 	}
-	log = log.With("requesting_service", authedSvc.Claims.Subject)
+	log = log.With("principal_service", authedSvc.Claims.Subject)
 
 	// validate iam token
 	iamToken := r.Header.Get("Authorization")
@@ -338,7 +338,7 @@ func (h *handler) updatePermission(w http.ResponseWriter, r *http.Request) {
 		connect.RespondAuthFailure(connect.User, err, w)
 		return
 	}
-	log = log.With("actor", authedUser.Claims.Subject)
+	log = log.With("principal_user", authedUser.Claims.Subject)
 
 	// extract slug from request URL
 	slug, err := connect.GetValidSlug(r)

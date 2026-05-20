@@ -93,7 +93,7 @@ func (h *accountHandler) getAccount(w http.ResponseWriter, r *http.Request) {
 		connect.RespondAuthFailure(connect.S2s, err, w)
 		return
 	}
-	log = log.With("requesting_service", authedSvc.Claims.Subject)
+	log = log.With("principal_service", authedSvc.Claims.Subject)
 
 	// validate iam token
 	accessToken := r.Header.Get("Authorization")
@@ -103,7 +103,7 @@ func (h *accountHandler) getAccount(w http.ResponseWriter, r *http.Request) {
 		connect.RespondAuthFailure(connect.User, err, w)
 		return
 	}
-	log = log.With("actor", authedUser.Claims.Subject)
+	log = log.With("principal_user", authedUser.Claims.Subject)
 
 	// get user's permissions
 	pm, _, err := h.permissions.GetAllowancePermissions(authedUser.Claims.Subject)
@@ -175,7 +175,7 @@ func (h *accountHandler) updateAccount(w http.ResponseWriter, r *http.Request) {
 		connect.RespondAuthFailure(connect.S2s, err, w)
 		return
 	}
-	log = h.logger.With("requesting_service", authedSvc.Claims.Subject)
+	log = h.logger.With("principal_service", authedSvc.Claims.Subject)
 
 	// validate iam token
 	accessToken := r.Header.Get("Authorization")
@@ -185,7 +185,7 @@ func (h *accountHandler) updateAccount(w http.ResponseWriter, r *http.Request) {
 		connect.RespondAuthFailure(connect.User, err, w)
 		return
 	}
-	log = log.With("actor", authedUser.Claims.Subject)
+	log = log.With("principal_user", authedUser.Claims.Subject)
 
 	// decode request body
 	var cmd allowances.UpdateAllowanceCmd

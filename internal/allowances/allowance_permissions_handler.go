@@ -95,7 +95,7 @@ func (h *allowancePermissionsHandler) getAllowancePermissions(w http.ResponseWri
 		connect.RespondAuthFailure(connect.S2s, err, w)
 		return
 	}
-	log = log.With("requesting_service", authedSvc.Claims.Subject)
+	log = log.With("principal_service", authedSvc.Claims.Subject)
 
 	// validate the iam token
 	iamToken := r.Header.Get("Authorization")
@@ -177,7 +177,7 @@ func (h *allowancePermissionsHandler) updateAllowancePermissions(w http.Response
 		connect.RespondAuthFailure(connect.S2s, err, w)
 		return
 	}
-	log = log.With("requesting_service", authedSvc.Claims.Subject)
+	log = log.With("principal_service", authedSvc.Claims.Subject)
 
 	// verify the iam token
 	iamToken := r.Header.Get("Authorization")
@@ -187,7 +187,7 @@ func (h *allowancePermissionsHandler) updateAllowancePermissions(w http.Response
 		connect.RespondAuthFailure(connect.User, err, w)
 		return
 	}
-	log = log.With("actor", authedUser.Claims.Subject)
+	log = log.With("principal_user", authedUser.Claims.Subject)
 
 	// get the request body
 	var cmd exo.UpdatePermissionsCmd
